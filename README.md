@@ -33,15 +33,28 @@ spotlight-key/
 │   ├── discovery.py    # Búsqueda de focos WiZ en la red local.
 │   └── config.py       # Carga/guardado de configuración persistente.
 ├── cli/            # Interfaz de línea de comandos.
+├── gui/            # Interfaz gráfica (PySide6) para configuración, pensada
+│                   # para usuarios no programadores.
 ├── tray/           # Ícono de bandeja del sistema (multiplataforma, pystray).
 ├── hotkeys/         # Atajos de teclado, implementación específica por SO.
 │   ├── windows.py
 │   └── linux.py
-└── tests/
+└── tests/          # Tests.
 ```
 
-La idea central: `core/` no sabe nada de teclado, bandeja ni CLI. Todo lo
-demás consume `core/` como una librería interna.
+La idea central: `core/` no sabe nada de teclado, bandeja, CLI ni GUI. Todo lo
+demás (`cli/`, `gui/`, `tray/`, `hotkeys/`) consume `core/` como una librería
+interna.
+
+### Interfaz gráfica
+
+Pensada para usuarios no técnicos. Se usa para configuración (buscar y
+agregar el foco, asignar atajos de teclado, elegir colores favoritos), no
+para el uso diario — eso lo cubren el ícono de bandeja y los atajos de
+teclado una vez configurado.
+
+Implementada con **PySide6** (Qt) por verse nativa y prolija en Windows y
+Linux.
 
 ### Nota sobre atajos de teclado en Linux
 
@@ -50,6 +63,12 @@ funciona razonablemente en X11, pero en **Wayland** la mayoría de las libs de
 captura global no funcionan por seguridad del protocolo. Por eso la app
 expone siempre una CLI — en Wayland, el atajo "global" se configura desde
 el propio entorno de escritorio (GNOME/KDE) apuntando a un comando de la CLI.
+
+### Distribución
+
+Para que usuarios no programadores puedan usarla sin instalar Python ni
+dependencias, la app se empaquetará como ejecutable con **PyInstaller**
+(y eventualmente AppImage/Flatpak para Linux). Pendiente de implementar.
 
 ## Dependencias principales
 
