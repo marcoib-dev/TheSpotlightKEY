@@ -1,0 +1,67 @@
+"""
+Wrapper sincrónico sobre pywizlight.
+
+pywizlight es asíncrono (usa asyncio) porque espera respuestas UDP
+con timeout. Esta clase esconde ese detalle: el resto de la app
+(CLI, GUI, tray, hotkeys) usa métodos normales, sin async/await.
+"""
+
+import asyncio
+from pywizlight import wizlight, PilotBuilder
+
+
+class Light:
+    def __init__(self, ip: str):
+        self.ip = ip
+
+    # --- Métodos internos, async ---
+
+    async def _turn_on(self, **kwargs):
+        bulb = wizlight(self.ip)
+        await bulb.turn_on(PilotBuilder(**kwargs))
+
+    async def _turn_off(self):
+        bulb = wizlight(self.ip)
+        await bulb.turn_off()
+
+    async def _get_state(self):
+        bulb = wizlight(self.ip)
+        result = await bulb.updateState()
+        # En pywizlight >= 0.6.x, updateState() puede devolver una lista de
+        # PilotParser (una respuesta por cada datagrama UDP enviado) en vez
+        # de un único objeto. Nos quedamos con la última respuesta recibida.
+        if isinstance(result, list):
+            if not result:
+                return None
+            return result[-1]
+        return result
+
+    # --- API pública, sincrónica ---
+
+    def turn_on(self):
+        """Enciende el foco con el último estado (color/brillo) que tenía."""
+        asyncio.run(self._turn_on())
+
+    def turn_off(self):
+        asyncio.run(self._turn_off())
+
+    def set_color(self, r: int, g: int, b: int):
+        """Enciende el foco con un color RGB específico."""
+        asyncio.run(self._turn_on(rgb=(r, g, b)))
+
+    def set_brightness(self, brightness: int):
+        """brightness: 0-255"""
+        asyncio.run(self._turn_on(brightness=brightness))
+
+    def set_warm_white(self, brightness: int = 255):
+        """Luz blanca cálida, útil como 'modo normal'."""
+        asyncio.run(self._turn_on(warm_white=brightness))
+
+    def is_on(self) -> bool:
+        state = asyncio.run(self._get_state())
+        if state is None:
+            raise RuntimeError(f"No se pudo obtener el estado del foco ({self.ip}).")
+        return state.get_state()
+
+    def __repr__(self):
+        return f"Light(ip={self.ip!r})"
