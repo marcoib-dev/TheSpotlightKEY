@@ -89,9 +89,33 @@ source .venv/bin/activate  # En Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## Uso
+## Atajos de teclado (Linux / Hyprland)
 
-_(pendiente, se documentará a medida que exista la CLI)_
+En Hyprland no hace falta ninguna librería de captura de teclado: los
+atajos se configuran directamente en la config del compositor, apuntando
+a la CLI de la app.
+
+1. Asegurate de tener el foco ya configurado (`python -m cli discover` y
+   `python -m cli set-ip <IP>`).
+2. Usá o adaptá el script `spotlight-key.sh` de la raíz del proyecto, que
+   activa el venv y llama a la CLI.
+3. Agregá los binds en tu config de Hyprland (en instalaciones con
+   DankMaterialShell, normalmente en `~/.config/hypr/dms/binds.conf`;
+   en una instalación estándar, en `~/.config/hypr/hyprland.conf`):
+bind = SUPER, 1, exec, "/ruta/a/spotlight-key.sh" toggle
+bind = SUPER, 2, exec, "/ruta/a/spotlight-key.sh" color 255 0 0
+bind = SUPER, 3, exec, "/ruta/a/spotlight-key.sh" color 0 0 255
+
+   **Importante:** si la ruta del proyecto tiene espacios, hay que
+   encerrarla entre comillas dobles dentro del bind, o Hyprland corta el
+   comando en el espacio y no ejecuta nada.
+
+4. `hyprctl reload` para aplicar los cambios.
+
+En GNOME/KDE (X11 o Wayland) el mecanismo es distinto: se configuran los
+atajos desde la configuración de "Atajos de teclado personalizados" del
+propio entorno, apuntando también al script. Pendiente de documentar en
+detalle.
 
 ## Licencia
 

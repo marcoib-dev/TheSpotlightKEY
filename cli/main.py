@@ -41,6 +41,15 @@ def cmd_off(args):
     _get_light().turn_off()
     print("Foco apagado.")
 
+def cmd_toggle(args):
+    light = _get_light()
+    if light.is_on():
+        light.turn_off()
+        print("Foco apagado.")
+    else:
+        light.turn_on()
+        print("Foco encendido.")
+
 
 def cmd_color(args):
     _get_light().set_color(args.r, args.g, args.b)
@@ -80,7 +89,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("on", help="Encender el foco").set_defaults(func=cmd_on)
     sub.add_parser("off", help="Apagar el foco").set_defaults(func=cmd_off)
     sub.add_parser("status", help="Ver estado actual").set_defaults(func=cmd_status)
+    sub.add_parser("toggle", help="Prender si está apagado, apagar si está prendido").set_defaults(func=cmd_toggle)
 
+     
     p_color = sub.add_parser("color", help="Setear color RGB (0-255 cada uno)")
     p_color.add_argument("r", type=int)
     p_color.add_argument("g", type=int)
