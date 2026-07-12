@@ -117,6 +117,28 @@ atajos desde la configuración de "Atajos de teclado personalizados" del
 propio entorno, apuntando también al script. Pendiente de documentar en
 detalle.
 
+## Daemon en background (Linux / systemd)
+
+Para que los atajos de teclado respondan instantáneamente (sin pagar el
+costo de arrancar Python en cada uno), la app corre un daemon liviano
+que escucha comandos por un socket Unix.
+
+1. Copiá el archivo de servicio:
+```bash
+   mkdir -p ~/.config/systemd/user
+   cp spotlight-key.service.example ~/.config/systemd/user/spotlight-key.service
+```
+2. Editá las rutas dentro del archivo para que apunten a tu instalación.
+3. Activalo:
+```bash
+   systemctl --user daemon-reload
+   systemctl --user enable --now spotlight-key.service
+```
+
+Los atajos de teclado (ver sección de arriba) deben apuntar a
+`spotlight-key-client.sh` en vez de `spotlight-key.sh` para aprovechar
+el daemon.
+
 ## Licencia
 
 Por definir.
