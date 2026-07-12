@@ -32,9 +32,8 @@ from PySide6.QtWidgets import (
 )
 
 from core.config import get_light_ip, set_light_ip, load_config
-from core.device import Light
+from core.device import Light, LightUnreachableError
 from core.discovery import discover_lights
-
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -133,7 +132,10 @@ class MainWindow(QMainWindow):
         return self.light
 
     def _show_error(self, e: Exception):
-        QMessageBox.critical(self, "Error", f"No se pudo completar la acción:\n{e}")
+        if isinstance(e, LightUnreachableError):
+            QMessageBox.warning(self, "Foco no responde", str(e))
+        else:
+            QMessageBox.critical(self, "Error", f"No se pudo completar la acción:\n{e}")
 
     # --- Handlers ---
 

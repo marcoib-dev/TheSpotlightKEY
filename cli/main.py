@@ -15,12 +15,11 @@ import argparse
 import sys
 
 from core.config import get_light_ip, set_light_ip
-from core.device import Light
+from core.device import Light, LightUnreachableError
 from core.discovery import discover_lights
 
 
 def _get_light() -> Light:
-    """Obtiene el Light configurado, o corta la ejecución con un mensaje claro."""
     ip = get_light_ip()
     if not ip:
         print(
@@ -32,39 +31,61 @@ def _get_light() -> Light:
     return Light(ip)
 
 
+def _run_safe(action):
+    """Ejecuta una acción sobre el foco, mostrando un mensaje claro si falla."""
+    try:
+        action()
+    except LightUnreachableError as e:
+        print(f"⚠ {e}")
+        sys.exit(1)
+
+
 def cmd_on(args):
-    _get_light().turn_on()
+    light = _get_light()
+    _run_safe(light.turn_on)
     print("Foco encendido.")
 
 
 def cmd_off(args):
-    _get_light().turn_off()
+    light = _get_light()
+    _run_safe(light.turn_off)
     print("Foco apagado.")
+
 
 def cmd_toggle(args):
     light = _get_light()
-    if light.is_on():
-        light.turn_off()
-        print("Foco apagado.")
-    else:
-        light.turn_on()
-        print("Foco encendido.")
+
+    def action():
+        if light.is_on():
+            light.turn_off()
+            print("Foco apagado.")
+        else:
+            light.turn_on()
+            print("Foco encendido.")
+
+    _run_safe(action)
 
 
 def cmd_color(args):
-    _get_light().set_color(args.r, args.g, args.b)
+    light = _get_light()
+    _run_safe(lambda: light.set_color(args.r, args.g, args.b))
     print(f"Color seteado a RGB({args.r}, {args.g}, {args.b}).")
 
 
 def cmd_brightness(args):
-    _get_light().set_brightness(args.value)
+    light = _get_light()
+    _run_safe(lambda: light.set_brightness(args.value))
     print(f"Brillo seteado a {args.value}.")
 
 
 def cmd_status(args):
     light = _get_light()
-    state = "encendido" if light.is_on() else "apagado"
-    print(f"Foco ({light.ip}): {state}")
+    try:
+        state = "encendido" if light.is_on() else "apagado"
+        print(f"Foco ({light.ip}): {state}")
+    except LightUnreachableError as e:
+        print(f"⚠ {e}")
+        sys.exit(1)
 
 
 def cmd_discover(args):
