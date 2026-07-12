@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+build/
+dist/
+
+# Config local del usuario (IP del foco, atajos, etc.)
+config.toml
+config.local.toml
+
+# Editores / SO
+.vscode/
+.idea/
+*.swp
+.DS_Store
