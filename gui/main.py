@@ -18,7 +18,7 @@ from gui.icons import icon
 class LightCard(QFrame):
     clicked = Signal(str)
 
-    def __init__(self, light: dict, is_on: bool | None, parent=None):
+    def __init__(self, light: dict, parent=None):
         super().__init__(parent)
         self.light_id = light["id"]
         self.setObjectName("LightCard")
@@ -28,16 +28,22 @@ class LightCard(QFrame):
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignCenter)
 
-        bulb_icon = "lightbulb" if is_on else "lightbulb-off"
-        icon_label = QLabel()
-        icon_label.setPixmap(icon(bulb_icon).pixmap(48, 48))
-        icon_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(icon_label)
+        self.icon_label = QLabel()
+        self.icon_label.setAlignment(Qt.AlignCenter)
+        self._set_icon("lightbulb-off")  # estado neutro hasta que llegue la respuesta real
+        layout.addWidget(self.icon_label)
 
         name_label = QLabel(light.get("name") or light["ip"])
         name_label.setObjectName("LightName")
         name_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(name_label)
+
+    def _set_icon(self, name: str):
+        self.icon_label.setPixmap(icon(name).pixmap(48, 48))
+
+    def set_state(self, is_on: bool | None):
+        """is_on=None significa 'no responde'; se muestra apagado igual."""
+        self._set_icon("lightbulb" if is_on else "lightbulb-off")
 
     def mousePressEvent(self, event):
         self.clicked.emit(self.light_id)
@@ -83,15 +89,24 @@ class DiscoverDialog(QDialog):
         self.accept()
 
 
+from gui.workers import LightStatusWorker
+from PySide6.QtCore import QThread
+
 class HomeScreen(QWidget):
     light_selected = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._status_thread: QThread | None = None
+        self._status_worker: LightStatusWorker | None = None
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 20, 24, 24)
 
         header = QHBoxLayout()
+        user_icon = QLabel()
+        user_icon.setPixmap(icon("user").pixmap(22, 22))
+        header.addWidget(user_icon)
         header.addWidget(QLabel("Hola user", objectName="Header"))
         header.addStretch()
         discover_btn = QPushButton("+ Buscar focos")
@@ -133,16 +148,46 @@ class HomeScreen(QWidget):
 
         cols = 3
         for i, light in enumerate(lights):
-            is_on = self._safe_is_on(light["ip"])
-            card = LightCard(light, is_on)
+            card = LightCard(light)
             card.clicked.connect(self.light_selected.emit)
             self.grid.addWidget(card, i // cols, i % cols)
 
-    def _safe_is_on(self, ip: str) -> bool | None:
-        try:
-            return Light(ip).is_on()
-        except LightUnreachableError:
-            return None
+        if lights:
+            self._start_status_check(lights)
+
+    def _start_status_check(self, lights: list[dict]):
+        if self._status_thread is not None and self._status_thread.isRunning():
+            return
+
+        self._status_thread = QThread()
+        self._status_worker = LightStatusWorker(lights)
+        self._status_worker.moveToThread(self._status_thread)
+
+        self._status_thread.started.connect(self._status_worker.run)
+        self._status_worker.finished.connect(self._on_status_ready)
+        self._status_worker.finished.connect(self._status_thread.quit)
+        self._status_worker.finished.connect(self._status_worker.deleteLater)
+        self._status_thread.finished.connect(self._status_thread.deleteLater)
+        self._status_thread.finished.connect(self._clear_status_thread_ref)  # ← nueva línea
+
+        self._status_thread.start()
+
+    def _clear_status_thread_ref(self):
+        """
+        Se ejecuta cuando el QThread termina. deleteLater() destruye el
+        objeto C++ en la próxima vuelta del loop de eventos, pero la
+        referencia de Python (self._status_thread) sigue apuntando ahí
+        si no la limpiamos: la próxima llamada a refresh() intentaría
+        usar un objeto ya borrado y explotaría con RuntimeError.
+        """
+        self._status_thread = None
+        self._status_worker = None
+
+    def _on_status_ready(self, results: dict):
+        for i in range(self.grid.count()):
+            widget = self.grid.itemAt(i).widget()
+            if isinstance(widget, LightCard) and widget.light_id in results:
+                widget.set_state(results[widget.light_id])
 
     def open_discover(self):
         dialog = DiscoverDialog(self)
@@ -160,7 +205,11 @@ class LightDetailScreen(QWidget):
         layout.setContentsMargins(24, 20, 24, 24)
 
         header = QHBoxLayout()
-        back_btn = QPushButton("← Volver")
+        back_btn = QPushButton()
+        back_btn.setObjectName("IconButton")
+        back_btn.setIcon(icon("chevron-left"))
+        back_btn.setIconSize(QSize(24, 24))
+        back_btn.setToolTip("Volver")
         back_btn.clicked.connect(self.back_requested.emit)
         header.addWidget(back_btn)
         header.addStretch()
@@ -190,6 +239,13 @@ class LightDetailScreen(QWidget):
         self.brightness_slider.sliderReleased.connect(self.on_brightness_changed)
         layout.addWidget(self.brightness_slider)
 
+        layout.addWidget(QLabel("Temperatura de color"))
+        self.temp_slider = QSlider(Qt.Horizontal)
+        self.temp_slider.setRange(Light.MIN_COLOR_TEMP, Light.MAX_COLOR_TEMP)
+        self.temp_slider.setValue(4000)  # blanco neutro como default visual
+        self.temp_slider.sliderReleased.connect(self.on_temp_changed)
+        layout.addWidget(self.temp_slider)
+
         color_btn = QPushButton("Elegir color...")
         color_btn.setObjectName("Primary")
         color_btn.clicked.connect(self.on_pick_color)
@@ -209,12 +265,20 @@ class LightDetailScreen(QWidget):
 
     def refresh_status(self):
         try:
-            is_on = self.light.is_on()
-            self._apply_state(is_on)
-            self.status_label.setText(f"Estado: {'encendido' if is_on else 'apagado'}")
+            status = self.light.get_status()
         except LightUnreachableError as e:
             self.status_label.setText("Estado: no responde")
             QMessageBox.warning(self, "Foco no responde", str(e))
+            return
+
+        self._apply_state(status["is_on"])
+        self.status_label.setText(f"Estado: {'encendido' if status['is_on'] else 'apagado'}")
+
+        if status["brightness"] is not None:
+            self.brightness_slider.setValue(status["brightness"])
+
+        if status["colortemp"] is not None:
+            self.temp_slider.setValue(status["colortemp"])
 
     def _apply_state(self, is_on: bool):
         self.state_icon.setPixmap(icon("lightbulb" if is_on else "lightbulb-off").pixmap(96, 96))
@@ -231,8 +295,15 @@ class LightDetailScreen(QWidget):
         try:
             self.light.set_brightness(self.brightness_slider.value())
         except LightUnreachableError as e:
-            QMessageBox.warning(self, "Foco no responde", str(e))
+            self._show_error(e) if hasattr(self, "_show_error") else QMessageBox.warning(self, "Foco no responde", str(e))
 
+    def on_temp_changed(self):
+        try:
+            self.light.set_color_temp(self.temp_slider.value())
+            self.refresh_status()
+        except LightUnreachableError as e:
+            QMessageBox.warning(self, "Foco no responde", str(e))
+    
     def on_pick_color(self):
         color = QColorDialog.getColor()
         if not color.isValid():

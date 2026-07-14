@@ -56,9 +56,40 @@ class LightUnreachableError(Exception):
 
 
 class Light:
+    MIN_COLOR_TEMP = 2200
+    MAX_COLOR_TEMP = 6500
+
     def __init__(self, ip: str, timeout: int = DEFAULT_TIMEOUT):
         self.ip = ip
         self.timeout = timeout
+
+
+    def get_status(self) -> dict:
+        """
+        Devuelve el estado completo del foco: encendido/apagado, brillo
+        y temperatura de color. brightness/colortemp pueden venir como
+        None si el foco está en modo RGB puro (sin esos campos seteados)
+        o si esta versión de pywizlight no expone ese dato.
+        """
+        state = asyncio.run(self._get_state())
+        if state is None:
+            raise LightUnreachableError(self.ip)
+
+        return {
+            "is_on": state.get_state(),
+            "brightness": self._safe_state_read(state, "get_brightness"),
+            "colortemp": self._safe_state_read(state, "get_colortemp"),
+        }
+
+    @staticmethod
+    def _safe_state_read(state, method_name: str):
+        method = getattr(state, method_name, None)
+        if method is None:
+            return None
+        try:
+            return method()
+        except Exception:
+            return None
 
     # --- Métodos internos, async ---
 
@@ -108,6 +139,15 @@ class Light:
         """Luz blanca cálida, útil como 'modo normal'."""
         asyncio.run(self._turn_on(warm_white=brightness))
 
+    def set_color_temp(self, kelvin: int):
+        """
+        kelvin: temperatura de color, entre MIN_COLOR_TEMP y MAX_COLOR_TEMP.
+        Valores bajos = luz cálida (amarillenta); altos = luz fría (azulada).
+        Al usar esto el foco sale del modo RGB, si es que estaba en uno.
+        """
+        kelvin = max(self.MIN_COLOR_TEMP, min(self.MAX_COLOR_TEMP, kelvin))
+        asyncio.run(self._turn_on(colortemp=kelvin))
+
     def is_on(self) -> bool:
         state = asyncio.run(self._get_state())
         if state is None:
@@ -116,3 +156,4 @@ class Light:
 
     def __repr__(self):
         return f"Light(ip={self.ip!r})"
+    
