@@ -64,3 +64,7 @@ def set_light_ip(ip: str, name: str = "") -> None:
     config["light"]["ip"] = ip
     config["light"]["name"] = name
     save_config(config)
+
+def get_log_path() -> Path:
+    """Devuelve la ruta del archivo de log, en el mismo directorio que config.toml."""
+    return _config_path().parent / "spotlight-key.log"

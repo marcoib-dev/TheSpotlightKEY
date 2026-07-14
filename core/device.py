@@ -13,22 +13,45 @@ a una única excepción (LightUnreachableError) fácil de manejar
 desde el resto de la app.
 """
 
+# core/device.py
+
 import asyncio
+import logging
+from logging.handlers import RotatingFileHandler
 from pywizlight import wizlight, PilotBuilder
 from pywizlight.exceptions import WizLightConnectionError, WizLightTimeOutError
+
+from core.config import get_log_path
+
+logger = logging.getLogger("spotlight-key")
+logger.setLevel(logging.WARNING)
+
+if not logger.handlers:
+    _handler = RotatingFileHandler(
+        get_log_path(),
+        maxBytes=1_000_000,  # ~1 MB por archivo
+        backupCount=3,        # guarda hasta 3 archivos viejos (.log.1, .log.2, .log.3)
+    )
+    _handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
+    )
+    logger.addHandler(_handler)
 
 DEFAULT_TIMEOUT = 6  # segundos que esperamos antes de darnos por vencidos
 
 
 class LightUnreachableError(Exception):
-    """El foco no respondió: puede estar apagado, sin red, o con otra IP."""
+    """El foco no respondió: puede estar apagado, sin red, con otra IP, o colgado."""
 
     def __init__(self, ip: str):
         self.ip = ip
         super().__init__(
-            f"El foco ({ip}) no respondió. Verificá que esté encendido "
-            f"(con corriente) y en la misma red. Si el problema persiste, "
-            f"puede que su IP haya cambiado — probá 'discover' de nuevo."
+            f"El foco ({ip}) no respondió. Probá esto en orden:\n"
+            f"  1. Desenchufá el foco unos segundos y volvé a enchufarlo "
+            f"(a veces el Wi-Fi del foco se cuelga y necesita reiniciar).\n"
+            f"  2. Verificá que esté encendido con corriente y en la misma red.\n"
+            f"  3. Si el problema persiste, puede que su IP haya cambiado — "
+            f"probá 'discover' de nuevo."
         )
 
 
@@ -61,6 +84,7 @@ class Light:
         try:
             return await asyncio.wait_for(coro, timeout=self.timeout)
         except (asyncio.TimeoutError, WizLightTimeOutError, WizLightConnectionError):
+            logger.warning(f"Foco {self.ip} no respondió (timeout tras {self.timeout}s)")
             raise LightUnreachableError(self.ip)
 
     # --- API pública, sincrónica ---
