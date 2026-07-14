@@ -1,19 +1,22 @@
 """
-Demonio de Spotlight-Key: corre en segundo plano con el event loop de
-asyncio ya activo, escuchando comandos por un socket Unix. Evita el
-costo de arrancar Python + importar dependencias en cada atajo de teclado.
+Demonio de Spotlight-Key. Protocolo (una línea de texto por comando):
 
-Protocolo: una línea de texto por comando (mismo vocabulario que la CLI):
-    toggle | on | off | color R G B | brightness N | status
+    list
+    on <foco>
+    off <foco>
+    toggle <foco>
+    color <foco> R G B
+    brightness <foco> N
+    status <foco>
 
-Responde una línea de texto con el resultado.
+<foco> es el id (MAC) o el nombre del foco (ver 'list' o config.toml).
 """
 
 import asyncio
 import os
 from pathlib import Path
 
-from core.config import get_light_ip
+from core.config import get_lights, resolve_light
 from core.device import Light
 
 
@@ -25,50 +28,52 @@ def _socket_path() -> Path:
 
 
 class Daemon:
-    def __init__(self):
-        self.light: Light | None = None
-        self._reload_light()
-
-    def _reload_light(self):
-        ip = get_light_ip()
-        self.light = Light(ip) if ip else None
-
     async def handle_command(self, command: str) -> str:
-        # Por si cambiaste la IP desde la GUI mientras el daemon ya corría.
-        self._reload_light()
-        if self.light is None:
-            return "ERROR: no hay foco configurado"
-
         parts = command.strip().split()
         if not parts:
             return "ERROR: comando vacío"
 
-        cmd, *args = parts
+        cmd = parts[0]
+
+        if cmd == "list":
+            entries = get_lights()
+            if not entries:
+                return "OK: sin focos configurados"
+            return "OK: " + ";".join(
+                f"{l['id']}|{l.get('name', '')}|{l['ip']}" for l in entries
+            )
+
+        if len(parts) < 2:
+            return "ERROR: formato esperado '<comando> <foco> [args]'"
+
+        foco_id, *args = parts[1:]
+        light_data = resolve_light(foco_id)
+        if light_data is None:
+            return f"ERROR: no se encontró ningún foco que coincida con '{foco_id}'"
+
+        light = Light(light_data["ip"])
+
         try:
             if cmd == "on":
-                await self.light._turn_on()
+                await light._turn_on()
                 return "OK: encendido"
             elif cmd == "off":
-                await self.light._turn_off()
+                await light._turn_off()
                 return "OK: apagado"
             elif cmd == "toggle":
-                state = await self.light._get_state()
+                state = await light._get_state()
                 is_on = state.get_state() if state else False
-                if is_on:
-                    await self.light._turn_off()
-                    return "OK: apagado"
-                await self.light._turn_on()
-                return "OK: encendido"
+                await (light._turn_off() if is_on else light._turn_on())
+                return f"OK: {'apagado' if is_on else 'encendido'}"
             elif cmd == "color":
                 r, g, b = map(int, args)
-                await self.light._turn_on(rgb=(r, g, b))
+                await light._turn_on(rgb=(r, g, b))
                 return f"OK: color {r},{g},{b}"
             elif cmd == "brightness":
-                value = int(args[0])
-                await self.light._turn_on(brightness=value)
-                return f"OK: brillo {value}"
+                await light._turn_on(brightness=int(args[0]))
+                return f"OK: brillo {args[0]}"
             elif cmd == "status":
-                state = await self.light._get_state()
+                state = await light._get_state()
                 is_on = state.get_state() if state else False
                 return f"OK: {'encendido' if is_on else 'apagado'}"
             else:
@@ -87,7 +92,6 @@ class Daemon:
         sock_path = _socket_path()
         if sock_path.exists():
             sock_path.unlink()
-
         server = await asyncio.start_unix_server(self._handle_client, path=str(sock_path))
         print(f"Spotlight-Key daemon escuchando en {sock_path}")
         async with server:

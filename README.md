@@ -22,7 +22,7 @@ Ofrecer control rápido del foco WiZ desde la PC:
 
 ## Estado
 
-🚧 En etapa temprana de desarrollo (reinicio desde cero).
+🚧 En etapa temprana de desarrollo 
 
 ## Arquitectura
 
@@ -138,7 +138,3 @@ que escucha comandos por un socket Unix.
 Los atajos de teclado (ver sección de arriba) deben apuntar a
 `spotlight-key-client.sh` en vez de `spotlight-key.sh` para aprovechar
 el daemon.
-
-## Licencia
-
-Por definir.
