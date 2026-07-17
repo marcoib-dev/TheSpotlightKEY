@@ -148,6 +148,15 @@ class Light:
         kelvin = max(self.MIN_COLOR_TEMP, min(self.MAX_COLOR_TEMP, kelvin))
         asyncio.run(self._turn_on(colortemp=kelvin))
 
+    def set_scene(self, scene_id: int):
+        """
+        Activa una escena nativa del foco (ver pywizlight.scenes.SCENES
+        para la lista completa de IDs disponibles, o core/presets.py para
+        los que usamos en la GUI). El foco enciende automáticamente al
+        activar una escena.
+        """
+        asyncio.run(self._turn_on(scene=scene_id))
+
     def is_on(self) -> bool:
         state = asyncio.run(self._get_state())
         if state is None:
@@ -156,4 +165,3 @@ class Light:
 
     def __repr__(self):
         return f"Light(ip={self.ip!r})"
-    

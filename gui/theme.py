@@ -9,9 +9,11 @@ QMainWindow, QWidget {{
     color: {WHITE};
     font-family: "Inter", "Segoe UI", sans-serif;
 }}
+QLabel {{ background-color: transparent; }}
 QLabel#Header {{ font-size: 18px; font-weight: 600; }}
 QLabel#ScreenTitle {{ font-size: 26px; font-weight: 700; color: {YELLOW}; }}
 QLabel#LightName {{ font-size: 13px; }}
+QProgressBar {{ background-color: transparent; }}
 QPushButton {{
     background-color: {BLACK_SOFT};
     color: {WHITE};
