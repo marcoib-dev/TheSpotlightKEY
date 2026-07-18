@@ -20,6 +20,6 @@ la GUI actual.
 WHITE_PRESETS = {
     "mas_calido":    {"label": "Más cálido",    "kelvin": 2200, "icon": "flame"},
     "blanco_calido": {"label": "Blanco cálido", "kelvin": 2700, "icon": "sun"},
-    "luz_de_dia":    {"label": "Luz de día",    "kelvin": 4500, "icon": "sun-dim"},
+    "luz_de_dia":    {"label": "Luz de día",    "kelvin": 4500, "icon": "lightbulb"},
     "blanco_frio":   {"label": "Blanco frío",   "kelvin": 6500, "icon": "snowflake"},
 }

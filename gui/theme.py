@@ -3,6 +3,7 @@ SURFACE = "#221F1A"        # tarjetas, paneles
 SURFACE_HOVER = "#2C2717"  # hover de tarjetas y botones
 BORDER = "#332D22"         # borde sutil por defecto
 BORDER_ACCENT = "#4A3D1A"  # borde de una tarjeta en estado "encendido"
+TOGGLE_ON_BG = "#3A3120"   # fondo del botón de power cuando está encendido
 YELLOW = "#FFC72C"
 YELLOW_HOVER = "#FFD75E"
 YELLOW_PRESSED = "#E6A800"
@@ -69,6 +70,32 @@ QPushButton#CompactAdd:pressed {{ background-color: {YELLOW_PRESSED}; }}
 
 QPushButton#IconButton {{ background-color: transparent; border: none; border-radius: 24px; }}
 QPushButton#IconButton:hover {{ background-color: {SURFACE}; }}
+QPushButton#IconButton[on="true"] {{ background-color: {TOGGLE_ON_BG}; }}
+QPushButton#IconButton[on="true"]:hover {{ background-color: {TOGGLE_ON_BG}; }}
+QPushButton#PowerToggleButton {{
+    background-color: transparent;
+    border: none;
+    border-radius: 22px;
+    padding: 0;
+}}
+QPushButton#PowerToggleButton:hover {{ background-color: {TOGGLE_ON_BG}; }}
+QPushButton#PowerToggleButton[on="true"] {{ background-color: {TOGGLE_ON_BG}; }}
+QPushButton#PowerToggleButton[on="true"]:hover {{ background-color: {BORDER_ACCENT}; }}
+
+QToolButton#PresetButton {{
+    background-color: {SURFACE};
+    color: {WHITE};
+    border: 1px solid transparent;
+    border-radius: 14px;
+    padding: 22px 8px;
+    min-height: 60px;
+    font-size: 13px;
+}}
+QToolButton#PresetButton:hover {{
+    background-color: {SURFACE_HOVER};
+    border: 1px solid {BORDER_ACCENT};
+}}
+QToolButton#PresetButton:pressed {{ background-color: {YELLOW_PRESSED}; color: {BLACK}; }}
 
 QSlider::groove:horizontal {{ height: 6px; background: {SURFACE}; border-radius: 3px; }}
 QSlider::handle:horizontal {{

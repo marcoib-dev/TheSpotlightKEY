@@ -2,13 +2,13 @@ import sys
 import uuid
 
 from PySide6.QtCore import Qt, Signal, QSize, QThread
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QStackedWidget,
     QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QSlider, QColorDialog, QMessageBox, QDialog,
     QListWidget, QListWidgetItem, QProgressBar, QLineEdit, QMenu,
-    QGraphicsDropShadowEffect,
+    QGraphicsDropShadowEffect, QToolButton, QSizePolicy,
 )
 
 from core.config import (
@@ -21,7 +21,7 @@ from core.device import Light, LightUnreachableError
 from core.discovery import discover_lights
 from core.rooms import get_room_status, toggle_room as toggle_room_status
 from core.presets import WHITE_PRESETS
-from gui.theme import STYLESHEET
+from gui.theme import STYLESHEET, YELLOW, WHITE
 from gui.icons import icon
 from gui.workers import LightStatusWorker, RoomStatusWorker
 
@@ -69,6 +69,24 @@ def _refresh_style(widget: QWidget):
     """
     widget.style().unpolish(widget)
     widget.style().polish(widget)
+
+
+def _tinted_icon(name: str, color: str, size: int = 28) -> QIcon:
+    """
+    Recolorea un ícono monocromático (blanco, como power.svg) al color
+    indicado, sin necesitar un segundo archivo .svg. Funciona porque
+    esos íconos son sólo trazo sobre fondo transparente: se pinta el
+    color encima respetando la forma (alpha) del ícono original.
+    """
+    base = icon(name).pixmap(size, size)
+    tinted = QPixmap(base.size())
+    tinted.fill(Qt.transparent)
+    painter = QPainter(tinted)
+    painter.drawPixmap(0, 0, base)
+    painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+    painter.fillRect(tinted.rect(), QColor(color))
+    painter.end()
+    return QIcon(tinted)
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +148,7 @@ class RoomCard(QFrame):
         self.room_id = room["id"]
         self.setObjectName("LightCard")  # reusa el mismo estilo que LightCard
         self.setProperty("on", False)
-        self.setFixedSize(140, 140)
+        self.setFixedSize(200, 200)
         self.setCursor(Qt.PointingHandCursor)
 
         layout = QVBoxLayout(self)
@@ -156,7 +174,7 @@ class RoomCard(QFrame):
         layout.addWidget(self.brightness_bar)
 
     def _set_icon(self, name: str):
-        self.icon_label.setPixmap(icon(name).pixmap(48, 48))
+        self.icon_label.setPixmap(icon(name).pixmap(64, 64))
 
     def set_state(self, is_on: bool, avg_brightness: int | None):
         self._set_icon(BULB_ON_ICON if is_on else BULB_OFF_ICON)
@@ -350,12 +368,21 @@ class HomeScreen(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 20, 24, 24)
 
-        header = QHBoxLayout()
+        # Fila 1: sólo el saludo.
+        greeting_row = QHBoxLayout()
         user_icon = QLabel()
         user_icon.setPixmap(icon("user").pixmap(22, 22))
-        header.addWidget(user_icon)
-        header.addWidget(QLabel("Bienvenido", objectName="Header"))
-        header.addStretch()
+        greeting_row.addWidget(user_icon)
+        greeting_row.addWidget(QLabel("Bienvenido", objectName="Header"))
+        greeting_row.addStretch()
+        layout.addLayout(greeting_row)
+
+        # Fila 2: título + acciones, a la misma altura.
+        title_row = QHBoxLayout()
+        title = QLabel("Habitaciones")
+        title.setObjectName("ScreenTitle")
+        title_row.addWidget(title)
+        title_row.addStretch()
 
         discover_btn = QPushButton()
         discover_btn.setObjectName("IconButton")
@@ -363,20 +390,17 @@ class HomeScreen(QWidget):
         discover_btn.setIconSize(QSize(20, 20))
         discover_btn.setToolTip("Buscar focos nuevos en la red")
         discover_btn.clicked.connect(self.open_discover)
-        header.addWidget(discover_btn)
+        title_row.addWidget(discover_btn)
 
         new_room_btn = QPushButton("+ Nueva habitación")
         new_room_btn.setObjectName("Primary")
         new_room_btn.clicked.connect(self.open_create_room)
-        header.addWidget(new_room_btn)
-        layout.addLayout(header)
-
-        title = QLabel("Habitaciones")
-        title.setObjectName("ScreenTitle")
-        layout.addWidget(title)
+        title_row.addWidget(new_room_btn)
+        layout.addLayout(title_row)
 
         self.grid = QGridLayout()
         self.grid.setSpacing(16)
+        self.grid.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
         grid_container = QWidget()
         grid_container.setLayout(self.grid)
 
@@ -402,7 +426,7 @@ class HomeScreen(QWidget):
         rooms = get_rooms()
         self.empty_label.setVisible(not rooms)
 
-        cols = 3
+        cols = 2
         for i, room in enumerate(rooms):
             card = RoomCard(room)
             card.clicked.connect(self.room_selected.emit)
@@ -497,6 +521,7 @@ class RoomDetailScreen(QWidget):
 
         self.grid = QGridLayout()
         self.grid.setSpacing(16)
+        self.grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         grid_container = QWidget()
         grid_container.setLayout(self.grid)
 
@@ -649,8 +674,10 @@ class LightDetailScreen(QWidget):
         toggle_row = QHBoxLayout()
         toggle_row.addStretch()
         self.toggle_btn = QPushButton()
-        self.toggle_btn.setObjectName("IconButton")
-        self.toggle_btn.setIconSize(QSize(28, 28))
+        self.toggle_btn.setObjectName("PowerToggleButton")
+        self.toggle_btn.setProperty("on", False)
+        self.toggle_btn.setIconSize(QSize(24, 24))
+        self.toggle_btn.setFixedSize(44, 44)
         self.toggle_btn.clicked.connect(self.on_toggle)
         toggle_row.addWidget(self.toggle_btn)
         toggle_row.addStretch()
@@ -675,10 +702,21 @@ class LightDetailScreen(QWidget):
         layout.addWidget(_section_label("Blanco"))
         white_grid = QGridLayout()
         white_grid.setSpacing(8)
+        white_grid = QGridLayout()
+        white_grid.setSpacing(8)
+        white_grid.setColumnStretch(0, 1)
+        white_grid.setColumnStretch(1, 1)
         for i, (key, preset) in enumerate(WHITE_PRESETS.items()):
-            btn = QPushButton(preset["label"])
+            btn = QToolButton()
+            btn.setObjectName("PresetButton")
+            btn.setText(preset["label"])
             btn.setIcon(icon(preset["icon"]))
-            btn.setIconSize(QSize(20, 20))
+            btn.setIconSize(QSize(26, 26))
+            btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            btn.setCursor(Qt.PointingHandCursor)
             kelvin = preset["kelvin"]
             btn.clicked.connect(lambda checked=False, k=kelvin: self.on_white_preset(k))
             white_grid.addWidget(btn, i // 2, i % 2)
@@ -761,8 +799,14 @@ class LightDetailScreen(QWidget):
 
     def _apply_state(self, is_on: bool):
         self.state_icon.setPixmap(icon(BULB_ON_ICON if is_on else BULB_OFF_ICON).pixmap(96, 96))
-        self.toggle_btn.setIcon(icon("power" if is_on else "power-off"))
         self._state_glow.setEnabled(bool(is_on))
+
+        # El power.svg es blanco fijo, así que para que se vea amarillo
+        # cuando está prendido lo reteñimos por código (ver _tinted_icon)
+        # en vez de necesitar un segundo archivo .svg.
+        self.toggle_btn.setIcon(_tinted_icon("power", YELLOW if is_on else WHITE, size=24))
+        self.toggle_btn.setProperty("on", bool(is_on))
+        _refresh_style(self.toggle_btn)
 
     def on_toggle(self):
         try:
