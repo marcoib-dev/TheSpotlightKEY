@@ -2,11 +2,13 @@ import sys
 import uuid
 
 from PySide6.QtCore import Qt, Signal, QSize, QThread
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QStackedWidget,
     QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QSlider, QColorDialog, QMessageBox, QDialog,
-    QListWidget, QListWidgetItem, QProgressBar, QLineEdit, QMenu, QInputDialog,
+    QListWidget, QListWidgetItem, QProgressBar, QLineEdit, QMenu,
+    QGraphicsDropShadowEffect,
 )
 
 from core.config import (
@@ -14,7 +16,6 @@ from core.config import (
     get_rooms, get_room, add_or_update_room,
     get_lights_in_room, get_unassigned_lights, assign_light_to_room,
     get_favorite_colors, add_favorite_color, remove_favorite_color,
-    rename_light, rename_room,
 )
 from core.device import Light, LightUnreachableError
 from core.discovery import discover_lights
@@ -24,6 +25,51 @@ from gui.theme import STYLESHEET
 from gui.icons import icon
 from gui.workers import LightStatusWorker, RoomStatusWorker
 
+# Nombres de archivo tal cual los bajó Marco de SvgRepo (ver sources/SVG/).
+# Si en algún momento se renombran a algo más prolijo (ej: "bulb-on.svg" /
+# "bulb-off.svg"), sólo hay que actualizar estas dos constantes.
+BULB_ON_ICON = "bulb-on-svgrepo-com"
+BULB_OFF_ICON = "bulb-svgrepo-com"
+
+
+# ---------------------------------------------------------------------------
+# Helpers de estilo
+# ---------------------------------------------------------------------------
+
+def _section_label(text: str) -> QLabel:
+    """Etiqueta chica en mayúscula para encabezar una sección (Brillo,
+    Blanco, Favoritos...). QSS no soporta letter-spacing, así que el
+    'aire' entre letras del mockup no se replica exactamente, pero el
+    tamaño/color/mayúscula sí dan el mismo aire prolijo."""
+    label = QLabel(text.upper())
+    label.setObjectName("SectionLabel")
+    return label
+
+
+def _make_glow(blur: int = 24) -> QGraphicsDropShadowEffect:
+    """
+    Resplandor amarillo, apagado por defecto. Cada widget necesita su
+    propia instancia (un QGraphicsEffect no se puede compartir entre
+    varios widgets), por eso esto es una función fábrica, no un objeto
+    único. Se prende/apaga con .setEnabled() según el estado on/off.
+    """
+    effect = QGraphicsDropShadowEffect()
+    effect.setBlurRadius(blur)
+    effect.setOffset(0, 0)
+    effect.setColor(QColor(255, 199, 44, 160))
+    effect.setEnabled(False)
+    return effect
+
+
+def _refresh_style(widget: QWidget):
+    """
+    Fuerza a Qt a reevaluar los selectores QSS que dependen de una
+    propiedad dinámica (ej: QFrame#LightCard[on="true"]). Sin esto,
+    cambiar setProperty() en tiempo real no repinta el widget.
+    """
+    widget.style().unpolish(widget)
+    widget.style().polish(widget)
+
 
 # ---------------------------------------------------------------------------
 # Tarjetas (focos y habitaciones)
@@ -31,66 +77,39 @@ from gui.workers import LightStatusWorker, RoomStatusWorker
 
 class LightCard(QFrame):
     clicked = Signal(str)
-    rename_requested = Signal(str)
 
     def __init__(self, light: dict, parent=None):
         super().__init__(parent)
         self.light_id = light["id"]
-        self._light = light
         self.setObjectName("LightCard")
+        self.setProperty("on", False)
         self.setFixedSize(140, 140)
         self.setCursor(Qt.PointingHandCursor)
-        self.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.customContextMenuRequested.connect(self._show_context_menu)
 
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignCenter)
 
         self.icon_label = QLabel()
         self.icon_label.setAlignment(Qt.AlignCenter)
-        self._set_icon("lightbulb-off")  # estado neutro hasta que llegue la respuesta real
+        self._glow = _make_glow()
+        self.icon_label.setGraphicsEffect(self._glow)
+        self._set_icon(BULB_OFF_ICON)  # estado neutro hasta que llegue la respuesta real
         layout.addWidget(self.icon_label)
 
-        self.name_label = QLabel(light.get("name") or light["ip"])
-        self.name_label.setObjectName("LightName")
-        self.name_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.name_label)
+        name_label = QLabel(light.get("name") or light["ip"])
+        name_label.setObjectName("LightName")
+        name_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(name_label)
 
     def _set_icon(self, name: str):
         self.icon_label.setPixmap(icon(name).pixmap(48, 48))
 
-    def set_name(self, name: str):
-        self.name_label.setText(name)
-        self._light["name"] = name
-
-    def rename(self):
-        current_name = self._light.get("name") or self._light["ip"]
-        new_name, ok = QInputDialog.getText(
-            self,
-            "Renombrar foco",
-            "Nombre del foco:",
-            text=current_name,
-        )
-        if not ok:
-            return
-        cleaned = new_name.strip()
-        if not cleaned:
-            QMessageBox.warning(self, "Falta el nombre", "Ingresá un nombre para el foco.")
-            return
-        rename_light(self.light_id, cleaned)
-        self.set_name(cleaned)
-        self.rename_requested.emit(self.light_id)
-
-    def _show_context_menu(self, pos):
-        menu = QMenu(self)
-        rename_action = menu.addAction("Renombrar")
-        action = menu.exec(self.mapToGlobal(pos))
-        if action == rename_action:
-            self.rename()
-
     def set_state(self, is_on: bool | None):
         """is_on=None significa 'no responde'; se muestra apagado igual."""
-        self._set_icon("lightbulb" if is_on else "lightbulb-off")
+        self._set_icon(BULB_ON_ICON if is_on else BULB_OFF_ICON)
+        self._glow.setEnabled(bool(is_on))
+        self.setProperty("on", bool(is_on))
+        _refresh_style(self)
 
     def mousePressEvent(self, event):
         self.clicked.emit(self.light_id)
@@ -100,35 +119,34 @@ class LightCard(QFrame):
 class RoomCard(QFrame):
     """
     Igual que LightCard, pero representa una Habitación: además del ícono
-    on/off, muestra una barra con el brillo promedio de los focos
-    encendidos (equivalente a la barra celeste de la app oficial de WiZ).
+    on/off (con resplandor + borde dorado si hay algo prendido), muestra
+    una barra con el brillo promedio de los focos encendidos.
     """
 
     clicked = Signal(str)
-    rename_requested = Signal(str)
 
     def __init__(self, room: dict, parent=None):
         super().__init__(parent)
         self.room_id = room["id"]
-        self._room = room
         self.setObjectName("LightCard")  # reusa el mismo estilo que LightCard
+        self.setProperty("on", False)
         self.setFixedSize(140, 140)
         self.setCursor(Qt.PointingHandCursor)
-        self.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.customContextMenuRequested.connect(self._show_context_menu)
 
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignCenter)
 
         self.icon_label = QLabel()
         self.icon_label.setAlignment(Qt.AlignCenter)
-        self._set_icon("lightbulb-off")
+        self._glow = _make_glow()
+        self.icon_label.setGraphicsEffect(self._glow)
+        self._set_icon(BULB_OFF_ICON)
         layout.addWidget(self.icon_label)
 
-        self.name_label = QLabel(room.get("name") or room["id"])
-        self.name_label.setObjectName("LightName")
-        self.name_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.name_label)
+        name_label = QLabel(room.get("name") or room["id"])
+        name_label.setObjectName("LightName")
+        name_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(name_label)
 
         self.brightness_bar = QProgressBar()
         self.brightness_bar.setRange(0, 255)
@@ -140,37 +158,11 @@ class RoomCard(QFrame):
     def _set_icon(self, name: str):
         self.icon_label.setPixmap(icon(name).pixmap(48, 48))
 
-    def set_name(self, name: str):
-        self.name_label.setText(name)
-        self._room["name"] = name
-
-    def rename(self):
-        current_name = self._room.get("name") or self._room["id"]
-        new_name, ok = QInputDialog.getText(
-            self,
-            "Renombrar habitación",
-            "Nombre de la habitación:",
-            text=current_name,
-        )
-        if not ok:
-            return
-        cleaned = new_name.strip()
-        if not cleaned:
-            QMessageBox.warning(self, "Falta el nombre", "Ingresá un nombre para la habitación.")
-            return
-        rename_room(self.room_id, cleaned)
-        self.set_name(cleaned)
-        self.rename_requested.emit(self.room_id)
-
-    def _show_context_menu(self, pos):
-        menu = QMenu(self)
-        rename_action = menu.addAction("Renombrar")
-        action = menu.exec(self.mapToGlobal(pos))
-        if action == rename_action:
-            self.rename()
-
     def set_state(self, is_on: bool, avg_brightness: int | None):
-        self._set_icon("lightbulb" if is_on else "lightbulb-off")
+        self._set_icon(BULB_ON_ICON if is_on else BULB_OFF_ICON)
+        self._glow.setEnabled(bool(is_on))
+        self.setProperty("on", bool(is_on))
+        _refresh_style(self)
         if is_on and avg_brightness is not None:
             self.brightness_bar.setValue(avg_brightness)
             self.brightness_bar.setVisible(True)
@@ -201,7 +193,7 @@ class ColorSwatchButton(QPushButton):
         self.setCursor(Qt.PointingHandCursor)
         self.setStyleSheet(
             f"QPushButton {{ background-color: rgb({r},{g},{b}); "
-            f"border: 2px solid #444; border-radius: 8px; }}"
+            f"border: 2px solid #332D22; border-radius: 8px; }}"
             f"QPushButton:hover {{ border: 2px solid #FFC72C; }}"
         )
         self.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -223,8 +215,8 @@ class DiscoverDialog(QDialog):
     """
     Busca focos WiZ nuevos en la red y los agrega a la config, SIN
     asignarlos a ninguna habitación todavía (room_id queda ""). Se
-    asignan después desde el botón "+ Agregar dispositivo" de una
-    habitación (ver AssignLightDialog).
+    asignan después desde el botón "+ Agregar" de una habitación (ver
+    AssignLightDialog).
     """
 
     def __init__(self, parent=None):
@@ -320,9 +312,9 @@ class AssignLightDialog(QDialog):
 
         if not unassigned:
             hint = QLabel(
-                "No hay focos sin asignar.\nUsá '+ Buscar focos' desde el inicio primero."
+                "No hay focos sin asignar.\nUsá 'Buscar focos' desde el inicio primero."
             )
-            hint.setStyleSheet("color: gray;")
+            hint.setStyleSheet("color: #8A8478;")
             layout.addWidget(hint)
 
         btn_row = QHBoxLayout()
@@ -362,11 +354,17 @@ class HomeScreen(QWidget):
         user_icon = QLabel()
         user_icon.setPixmap(icon("user").pixmap(22, 22))
         header.addWidget(user_icon)
-        header.addWidget(QLabel("Hola user", objectName="Header"))
+        header.addWidget(QLabel("Bienvenido", objectName="Header"))
         header.addStretch()
-        discover_btn = QPushButton("+ Buscar focos")
+
+        discover_btn = QPushButton()
+        discover_btn.setObjectName("IconButton")
+        discover_btn.setIcon(icon("search"))
+        discover_btn.setIconSize(QSize(20, 20))
+        discover_btn.setToolTip("Buscar focos nuevos en la red")
         discover_btn.clicked.connect(self.open_discover)
         header.addWidget(discover_btn)
+
         new_room_btn = QPushButton("+ Nueva habitación")
         new_room_btn.setObjectName("Primary")
         new_room_btn.clicked.connect(self.open_create_room)
@@ -390,7 +388,7 @@ class HomeScreen(QWidget):
 
         self.empty_label = QLabel("Ninguna habitación creada todavía.")
         self.empty_label.setAlignment(Qt.AlignCenter)
-        self.empty_label.setStyleSheet("color: gray; margin-top: 40px;")
+        self.empty_label.setStyleSheet("color: #8A8478; margin-top: 40px;")
         layout.addWidget(self.empty_label)
 
         self.refresh()
@@ -408,7 +406,6 @@ class HomeScreen(QWidget):
         for i, room in enumerate(rooms):
             card = RoomCard(room)
             card.clicked.connect(self.room_selected.emit)
-            card.rename_requested.connect(lambda _room_id=None, _card=card: self.refresh())
             self.grid.addWidget(card, i // cols, i % cols)
 
         if rooms:
@@ -459,7 +456,6 @@ class HomeScreen(QWidget):
 class RoomDetailScreen(QWidget):
     back_requested = Signal()
     light_selected = Signal(str)
-    room_renamed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -482,29 +478,22 @@ class RoomDetailScreen(QWidget):
         self.name_label = QLabel()
         self.name_label.setObjectName("ScreenTitle")
         header.addWidget(self.name_label)
-
-        rename_btn = QPushButton()
-        rename_btn.setObjectName("IconButton")
-        rename_btn.setIcon(icon("pencil"))
-        rename_btn.setIconSize(QSize(20, 20))
-        rename_btn.setToolTip("Renombrar habitación")
-        rename_btn.clicked.connect(self.rename_room)
-        header.addWidget(rename_btn)
         header.addStretch()
+
+        add_btn = QPushButton("+ Agregar")
+        add_btn.setObjectName("CompactAdd")
+        add_btn.setToolTip("Agregar un dispositivo a esta habitación")
+        add_btn.clicked.connect(self.open_assign_light)
+        header.addWidget(add_btn)
 
         self.room_toggle_btn = QPushButton()
         self.room_toggle_btn.setObjectName("IconButton")
         self.room_toggle_btn.setIcon(icon("power"))
-        self.room_toggle_btn.setIconSize(QSize(24, 24))
+        self.room_toggle_btn.setIconSize(QSize(22, 22))
         self.room_toggle_btn.setToolTip("Encender/apagar toda la habitación")
         self.room_toggle_btn.clicked.connect(self.on_toggle_room)
         header.addWidget(self.room_toggle_btn)
         layout.addLayout(header)
-
-        add_btn = QPushButton("+ Agregar dispositivo")
-        add_btn.setObjectName("Primary")
-        add_btn.clicked.connect(self.open_assign_light)
-        layout.addWidget(add_btn)
 
         self.grid = QGridLayout()
         self.grid.setSpacing(16)
@@ -519,7 +508,7 @@ class RoomDetailScreen(QWidget):
 
         self.empty_label = QLabel("Ningún foco asignado a esta habitación todavía.")
         self.empty_label.setAlignment(Qt.AlignCenter)
-        self.empty_label.setStyleSheet("color: gray; margin-top: 40px;")
+        self.empty_label.setStyleSheet("color: #8A8478; margin-top: 40px;")
         layout.addWidget(self.empty_label)
 
     def load_room(self, room_id: str):
@@ -544,7 +533,6 @@ class RoomDetailScreen(QWidget):
         for i, light in enumerate(lights):
             card = LightCard(light)
             card.clicked.connect(self.light_selected.emit)
-            card.rename_requested.connect(lambda _light_id=None, _card=card: self.refresh())
             self.grid.addWidget(card, i // cols, i % cols)
 
         if lights:
@@ -577,27 +565,6 @@ class RoomDetailScreen(QWidget):
             if isinstance(widget, LightCard) and widget.light_id in results:
                 widget.set_state(results[widget.light_id])
 
-    def rename_room(self):
-        if self.room_id is None:
-            return
-        room = get_room(self.room_id)
-        current_name = (room.get("name") if room else None) or self.room_id
-        new_name, ok = QInputDialog.getText(
-            self,
-            "Renombrar habitación",
-            "Nombre de la habitación:",
-            text=current_name,
-        )
-        if not ok:
-            return
-        cleaned = new_name.strip()
-        if not cleaned:
-            QMessageBox.warning(self, "Falta el nombre", "Ingresá un nombre para la habitación.")
-            return
-        rename_room(self.room_id, cleaned)
-        self.name_label.setText(cleaned)
-        self.room_renamed.emit()
-
     def on_toggle_room(self):
         if self.room_id is None:
             return
@@ -617,78 +584,101 @@ class RoomDetailScreen(QWidget):
 
 # ---------------------------------------------------------------------------
 # Pantalla 3: Detalle de Dispositivo
+#
+# El header (botón "volver") queda fijo arriba; todo lo demás va adentro
+# de un QScrollArea. El ícono + toggle principal viven dentro de un panel
+# "hero" (fondo propio, esquinas redondeadas) para separarlos visualmente
+# de los controles de abajo.
 # ---------------------------------------------------------------------------
 
 class LightDetailScreen(QWidget):
     back_requested = Signal()
-    light_renamed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.light: Light | None = None
         self.light_id: str | None = None
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 24)
 
-        header = QHBoxLayout()
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        # --- Header fijo (no scrollea) ---
+        header_container = QWidget()
+        header_layout = QHBoxLayout(header_container)
+        header_layout.setContentsMargins(24, 20, 24, 8)
         back_btn = QPushButton()
         back_btn.setObjectName("IconButton")
         back_btn.setIcon(icon("chevron-left"))
         back_btn.setIconSize(QSize(24, 24))
         back_btn.setToolTip("Volver")
         back_btn.clicked.connect(self.back_requested.emit)
-        header.addWidget(back_btn)
-        header.addStretch()
-        layout.addLayout(header)
+        header_layout.addWidget(back_btn)
+        header_layout.addStretch()
+        outer_layout.addWidget(header_container)
 
-        header = QHBoxLayout()
+        # --- Contenido scrolleable ---
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        outer_layout.addWidget(scroll)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(24, 0, 24, 24)
+        layout.setSpacing(14)
+        scroll.setWidget(content)
+
         self.name_label = QLabel()
         self.name_label.setObjectName("ScreenTitle")
-        header.addWidget(self.name_label)
+        layout.addWidget(self.name_label)
 
-        rename_btn = QPushButton()
-        rename_btn.setObjectName("IconButton")
-        rename_btn.setIcon(icon("pencil"))
-        rename_btn.setIconSize(QSize(20, 20))
-        rename_btn.setToolTip("Renombrar foco")
-        rename_btn.clicked.connect(self.rename_light)
-        header.addWidget(rename_btn)
-        header.addStretch()
-        layout.addLayout(header)
+        # --- Panel "hero": ícono + toggle principal ---
+        hero = QFrame()
+        hero.setObjectName("HeroPanel")
+        hero_layout = QVBoxLayout(hero)
+        hero_layout.setContentsMargins(20, 24, 20, 20)
+        hero_layout.setAlignment(Qt.AlignCenter)
 
         self.state_icon = QLabel()
         self.state_icon.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.state_icon)
+        self._state_glow = _make_glow(blur=36)
+        self.state_icon.setGraphicsEffect(self._state_glow)
+        hero_layout.addWidget(self.state_icon)
 
         toggle_row = QHBoxLayout()
         toggle_row.addStretch()
         self.toggle_btn = QPushButton()
         self.toggle_btn.setObjectName("IconButton")
-        self.toggle_btn.setIconSize(QSize(40, 40))
+        self.toggle_btn.setIconSize(QSize(28, 28))
         self.toggle_btn.clicked.connect(self.on_toggle)
         toggle_row.addWidget(self.toggle_btn)
         toggle_row.addStretch()
-        layout.addLayout(toggle_row)
+        hero_layout.addLayout(toggle_row)
 
-        layout.addWidget(QLabel("Brillo"))
+        layout.addWidget(hero)
+
+        layout.addWidget(_section_label("Brillo"))
         self.brightness_slider = QSlider(Qt.Horizontal)
         self.brightness_slider.setRange(0, 255)
         self.brightness_slider.sliderReleased.connect(self.on_brightness_changed)
         layout.addWidget(self.brightness_slider)
 
-        layout.addWidget(QLabel("Temperatura de color"))
+        layout.addWidget(_section_label("Temperatura de color"))
         self.temp_slider = QSlider(Qt.Horizontal)
         self.temp_slider.setRange(Light.MIN_COLOR_TEMP, Light.MAX_COLOR_TEMP)
         self.temp_slider.setValue(4000)  # blanco neutro como default visual
         self.temp_slider.sliderReleased.connect(self.on_temp_changed)
         layout.addWidget(self.temp_slider)
 
-        # --- Presets "Blanco" (temperatura de color fija) ---
-        layout.addWidget(QLabel("Blanco"))
+        # --- Presets "Blanco" (temperatura de color fija, con ícono) ---
+        layout.addWidget(_section_label("Blanco"))
         white_grid = QGridLayout()
         white_grid.setSpacing(8)
         for i, (key, preset) in enumerate(WHITE_PRESETS.items()):
             btn = QPushButton(preset["label"])
+            btn.setIcon(icon(preset["icon"]))
+            btn.setIconSize(QSize(20, 20))
             kelvin = preset["kelvin"]
             btn.clicked.connect(lambda checked=False, k=kelvin: self.on_white_preset(k))
             white_grid.addWidget(btn, i // 2, i % 2)
@@ -696,9 +686,10 @@ class LightDetailScreen(QWidget):
 
         # --- Favoritos (colores RGB guardados por el usuario) ---
         favorites_header = QHBoxLayout()
-        favorites_header.addWidget(QLabel("Favoritos"))
+        favorites_header.addWidget(_section_label("Favoritos"))
         favorites_header.addStretch()
         add_favorite_btn = QPushButton("+ Guardar color")
+        add_favorite_btn.setObjectName("CompactAdd")
         add_favorite_btn.clicked.connect(self.on_add_favorite)
         favorites_header.addWidget(add_favorite_btn)
         layout.addLayout(favorites_header)
@@ -709,7 +700,7 @@ class LightDetailScreen(QWidget):
         layout.addLayout(self.favorites_grid)
 
         self.favorites_empty_label = QLabel("Todavía no guardaste ningún color.")
-        self.favorites_empty_label.setStyleSheet("color: gray;")
+        self.favorites_empty_label.setStyleSheet("color: #8A8478;")
         layout.addWidget(self.favorites_empty_label)
 
         color_btn = QPushButton("Elegir color...")
@@ -717,9 +708,11 @@ class LightDetailScreen(QWidget):
         color_btn.clicked.connect(self.on_pick_color)
         layout.addWidget(color_btn)
 
-        layout.addStretch()
         self.status_label = QLabel("Estado: —")
+        self.status_label.setStyleSheet("color: #8A8478;")
         layout.addWidget(self.status_label)
+
+        layout.addStretch()
 
     def load_light(self, light_id: str):
         data = get_light(light_id)
@@ -748,27 +741,6 @@ class LightDetailScreen(QWidget):
         if status["colortemp"] is not None:
             self.temp_slider.setValue(status["colortemp"])
 
-    def rename_light(self):
-        if self.light_id is None:
-            return
-        data = get_light(self.light_id)
-        current_name = (data.get("name") if data else None) or data["ip"] if data else self.light_id
-        new_name, ok = QInputDialog.getText(
-            self,
-            "Renombrar foco",
-            "Nombre del foco:",
-            text=current_name,
-        )
-        if not ok:
-            return
-        cleaned = new_name.strip()
-        if not cleaned:
-            QMessageBox.warning(self, "Falta el nombre", "Ingresá un nombre para el foco.")
-            return
-        rename_light(self.light_id, cleaned)
-        self.name_label.setText(cleaned)
-        self.light_renamed.emit()
-
     def refresh_favorites(self):
         while self.favorites_grid.count():
             item = self.favorites_grid.takeAt(0)
@@ -788,8 +760,9 @@ class LightDetailScreen(QWidget):
             self.favorites_grid.addWidget(swatch, i // cols, i % cols)
 
     def _apply_state(self, is_on: bool):
-        self.state_icon.setPixmap(icon("lightbulb" if is_on else "lightbulb-off").pixmap(96, 96))
-        self.toggle_btn.setIcon(icon("toggle-right" if is_on else "toggle-left"))
+        self.state_icon.setPixmap(icon(BULB_ON_ICON if is_on else BULB_OFF_ICON).pixmap(96, 96))
+        self.toggle_btn.setIcon(icon("power" if is_on else "power-off"))
+        self._state_glow.setEnabled(bool(is_on))
 
     def on_toggle(self):
         try:
@@ -871,7 +844,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Spotlight-Key")
-        self.setMinimumSize(480, 560)
+        self.setMinimumSize(420, 600)
+        self.resize(520, 780)  # tamaño inicial cómodo; sin esto Qt abre en el mínimo
 
         self.stack = QStackedWidget()
         self.setCentralWidget(self.stack)
@@ -886,10 +860,7 @@ class MainWindow(QMainWindow):
         self.home.room_selected.connect(self.open_room)
         self.room_detail.back_requested.connect(self.open_home)
         self.room_detail.light_selected.connect(self.open_light)
-        self.room_detail.room_renamed.connect(self.home.refresh)
         self.light_detail.back_requested.connect(self.open_room_from_light)
-        self.light_detail.light_renamed.connect(self.room_detail.refresh)
-        self.light_detail.light_renamed.connect(self.home.refresh)
 
     def open_room(self, room_id: str):
         self.room_detail.load_room(room_id)

@@ -1,7 +1,13 @@
-BLACK = "#1A1A1A"
-BLACK_SOFT = "#2B2B2B"
+BLACK = "#16130F"          # fondo principal, negro con un pelín de calidez
+SURFACE = "#221F1A"        # tarjetas, paneles
+SURFACE_HOVER = "#2C2717"  # hover de tarjetas y botones
+BORDER = "#332D22"         # borde sutil por defecto
+BORDER_ACCENT = "#4A3D1A"  # borde de una tarjeta en estado "encendido"
 YELLOW = "#FFC72C"
-WHITE = "#F5F5F5"
+YELLOW_HOVER = "#FFD75E"
+YELLOW_PRESSED = "#E6A800"
+WHITE = "#F5F1EA"
+TEXT_SECONDARY = "#8A8478"  # etiquetas, texto de apoyo
 
 STYLESHEET = f"""
 QMainWindow, QWidget {{
@@ -12,23 +18,59 @@ QMainWindow, QWidget {{
 QLabel {{ background-color: transparent; }}
 QLabel#Header {{ font-size: 18px; font-weight: 600; }}
 QLabel#ScreenTitle {{ font-size: 26px; font-weight: 700; color: {YELLOW}; }}
+QLabel#SectionLabel {{ font-size: 11px; font-weight: 600; color: {TEXT_SECONDARY}; }}
 QLabel#LightName {{ font-size: 13px; }}
-QProgressBar {{ background-color: transparent; }}
+
+QProgressBar {{ background-color: transparent; border: none; }}
+QProgressBar::chunk {{ background-color: {YELLOW}; border-radius: 3px; }}
+
+QFrame#LightCard {{
+    background-color: {SURFACE};
+    border-radius: 16px;
+    border: 1px solid transparent;
+}}
+QFrame#LightCard:hover {{ background-color: {SURFACE_HOVER}; }}
+QFrame#LightCard[on="true"] {{ border: 1px solid {BORDER_ACCENT}; }}
+
+QFrame#HeroPanel {{
+    background-color: {SURFACE};
+    border-radius: 20px;
+}}
+
 QPushButton {{
-    background-color: {BLACK_SOFT};
+    background-color: {SURFACE};
     color: {WHITE};
-    border: none;
-    border-radius: 8px;
+    border: 1px solid transparent;
+    border-radius: 10px;
     padding: 8px 14px;
 }}
-QPushButton:hover {{ background-color: #3A3A3A; }}
+QPushButton:hover {{ background-color: {SURFACE_HOVER}; }}
+
 QPushButton#Primary {{ background-color: {YELLOW}; color: {BLACK}; font-weight: 600; }}
-QPushButton#Primary:hover {{ background-color: #FFD75E; }}
-QPushButton#IconButton {{ background-color: transparent; border-radius: 24px; }}
-QPushButton#IconButton:hover {{ background-color: {BLACK_SOFT}; }}
-QFrame#LightCard {{ background-color: {BLACK_SOFT}; border-radius: 16px; }}
-QFrame#LightCard:hover {{ background-color: #333333; }}
-QSlider::groove:horizontal {{ height: 6px; background: {BLACK_SOFT}; border-radius: 3px; }}
+QPushButton#Primary:hover {{ background-color: {YELLOW_HOVER}; }}
+QPushButton#Primary:pressed {{ background-color: {YELLOW_PRESSED}; }}
+
+QPushButton#Secondary {{
+    background-color: transparent;
+    color: {WHITE};
+    border: 1px solid {BORDER};
+}}
+QPushButton#Secondary:hover {{ background-color: {SURFACE}; }}
+
+QPushButton#CompactAdd {{
+    background-color: {YELLOW};
+    color: {BLACK};
+    font-weight: 700;
+    border-radius: 14px;
+    padding: 4px 12px;
+}}
+QPushButton#CompactAdd:hover {{ background-color: {YELLOW_HOVER}; }}
+QPushButton#CompactAdd:pressed {{ background-color: {YELLOW_PRESSED}; }}
+
+QPushButton#IconButton {{ background-color: transparent; border: none; border-radius: 24px; }}
+QPushButton#IconButton:hover {{ background-color: {SURFACE}; }}
+
+QSlider::groove:horizontal {{ height: 6px; background: {SURFACE}; border-radius: 3px; }}
 QSlider::handle:horizontal {{
     background: {YELLOW}; width: 18px; height: 18px; margin: -6px 0; border-radius: 9px;
 }}
