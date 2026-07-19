@@ -8,6 +8,7 @@ usuario (no en el repo — ver .gitignore).
 
 import sys
 import tomllib
+import uuid
 from pathlib import Path
 
 try:
@@ -33,12 +34,15 @@ def get_log_path() -> Path:
 def load_config() -> dict:
     path = _config_path()
     if not path.exists():
-        return {"lights": [], "hotkeys": {}, "rooms": []}
+        return {"lights": [], "hotkeys": [], "rooms": []}
     with open(path, "rb") as f:
         config = tomllib.load(f)
     config.setdefault("lights", [])
-    config.setdefault("hotkeys", {})
     config.setdefault("rooms", [])
+    # Migración: versiones viejas guardaban "hotkeys" como tabla vacía
+    # ({}), nunca se usó de verdad. Si no es una lista, se resetea.
+    if not isinstance(config.get("hotkeys"), list):
+        config["hotkeys"] = []
     return config
 
 
@@ -266,3 +270,43 @@ def assign_light_to_room(light_id: str, room_id: str) -> None:
             save_config(config)
             return
     raise ValueError(f"No existe ningún foco con id {light_id!r}")
+
+
+# --- API de atajos de teclado ---
+#
+# Cada atajo asocia una combinación de teclas con una acción concreta.
+# El id se genera acá mismo (a diferencia de rooms, donde lo decide quien
+# llama) porque no hay ningún flujo que necesite controlarlo desde afuera.
+#
+# favorite_index usa -1 como "sin valor" en vez de None: TOML no tiene
+# null, así que None rompería al guardar (tomli_w no sabe serializarlo).
+
+def get_hotkeys() -> list[dict]:
+    return load_config().get("hotkeys", [])
+
+
+def add_hotkey(keys: str, action: str, target_id: str, favorite_index: int = -1) -> dict:
+    """
+    action: "toggle_light" | "toggle_room" | "apply_favorite_color"
+    target_id: id del foco o de la habitación, según la acción
+    favorite_index: sólo para "apply_favorite_color" (posición en la
+                    lista de favoritos de ese foco)
+    """
+    config = load_config()
+    hotkeys = config.setdefault("hotkeys", [])
+    new_hotkey = {
+        "id": uuid.uuid4().hex[:8],
+        "keys": keys,
+        "action": action,
+        "target_id": target_id,
+        "favorite_index": favorite_index,
+    }
+    hotkeys.append(new_hotkey)
+    save_config(config)
+    return new_hotkey
+
+
+def remove_hotkey(hotkey_id: str) -> None:
+    config = load_config()
+    config["hotkeys"] = [h for h in config.get("hotkeys", []) if h.get("id") != hotkey_id]
+    save_config(config)

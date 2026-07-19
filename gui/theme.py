@@ -38,6 +38,11 @@ QFrame#HeroPanel {{
     border-radius: 20px;
 }}
 
+QFrame#HotkeyRow {{
+    background-color: {SURFACE};
+    border-radius: 10px;
+}}
+
 QPushButton {{
     background-color: {SURFACE};
     color: {WHITE};
@@ -70,8 +75,7 @@ QPushButton#CompactAdd:pressed {{ background-color: {YELLOW_PRESSED}; }}
 
 QPushButton#IconButton {{ background-color: transparent; border: none; border-radius: 24px; }}
 QPushButton#IconButton:hover {{ background-color: {SURFACE}; }}
-QPushButton#IconButton[on="true"] {{ background-color: {TOGGLE_ON_BG}; }}
-QPushButton#IconButton[on="true"]:hover {{ background-color: {TOGGLE_ON_BG}; }}
+
 QPushButton#PowerToggleButton {{
     background-color: transparent;
     border: none;

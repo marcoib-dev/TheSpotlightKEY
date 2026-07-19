@@ -3,7 +3,12 @@
 
 Pensado para el uso del día a día (ver README): encender/apagar focos
 sin tener que abrir la GUI completa. La GUI queda para configuración
-(habitaciones, colores favoritos, etc.), esto es sólo control rápido.
+(habitaciones, colores favoritos, atajos de teclado, etc.), esto es
+sólo control rápido.
+
+También es responsable de mantener vivos los atajos de teclado
+globales de Windows (ver hotkeys/windows.py) — necesitan algún proceso
+corriendo todo el tiempo, y el tray ya cumple ese rol.
 
 Corre su propio loop de eventos (pystray.Icon.run()), separado del de la
 GUI (PySide6). Se lanza como proceso aparte: `python -m tray`.
@@ -25,6 +30,7 @@ from PySide6.QtWidgets import QApplication
 
 from core.config import get_lights
 from core.device import Light, LightUnreachableError
+from hotkeys.windows import start_hotkey_manager
 
 ICONS_DIR = Path(__file__).resolve().parent.parent / "sources" / "SVG"
 
@@ -149,8 +155,10 @@ def _build_menu_items():
 def _start_status_loop(icon: pystray.Icon):
     """
     Corre como 'setup' de pystray: arranca apenas el ícono está listo
-    para mostrarse, en un hilo aparte que refresca la caché de estado
-    cada STATUS_REFRESH_INTERVAL segundos y repinta el ícono/menú.
+    para mostrarse. Arranca dos cosas en paralelo:
+      1. El refresco periódico del estado de los focos (ícono + menú).
+      2. El listener de atajos de teclado (no-op en Linux por ahora,
+         ver hotkeys/windows.py).
     """
     icon.visible = True
 
@@ -162,6 +170,7 @@ def _start_status_loop(icon: pystray.Icon):
             time.sleep(STATUS_REFRESH_INTERVAL)
 
     threading.Thread(target=loop, daemon=True).start()
+    start_hotkey_manager()
 
 
 def main():

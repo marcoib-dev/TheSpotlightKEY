@@ -1,14 +1,16 @@
+import ctypes
 import sys
 import uuid
 
 from PySide6.QtCore import Qt, Signal, QSize, QThread
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QStackedWidget,
     QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QSlider, QColorDialog, QMessageBox, QDialog,
     QListWidget, QListWidgetItem, QProgressBar, QLineEdit, QMenu,
-    QGraphicsDropShadowEffect, QToolButton, QSizePolicy,
+    QGraphicsDropShadowEffect, QToolButton, QSizePolicy, QComboBox,
+    QKeySequenceEdit,
 )
 
 from core.config import (
@@ -16,6 +18,7 @@ from core.config import (
     get_rooms, get_room, add_or_update_room,
     get_lights_in_room, get_unassigned_lights, assign_light_to_room,
     get_favorite_colors, add_favorite_color, remove_favorite_color,
+    get_hotkeys, add_hotkey, remove_hotkey,
 )
 from core.device import Light, LightUnreachableError
 from core.discovery import discover_lights
@@ -89,6 +92,30 @@ def _tinted_icon(name: str, color: str, size: int = 28) -> QIcon:
     return QIcon(tinted)
 
 
+def _describe_hotkey(hotkey: dict) -> str:
+    """Texto legible de qué hace un atajo, para listarlo en Configuración."""
+    action = hotkey.get("action")
+    target_id = hotkey.get("target_id")
+
+    if action == "toggle_light":
+        light = get_light(target_id)
+        name = (light.get("name") or light["ip"]) if light else "(foco eliminado)"
+        return f"Encender/apagar — {name}"
+
+    if action == "toggle_room":
+        room = get_room(target_id)
+        name = (room.get("name") if room else None) or "(habitación eliminada)"
+        return f"Encender/apagar habitación — {name}"
+
+    if action == "apply_favorite_color":
+        light = get_light(target_id)
+        name = (light.get("name") or light["ip"]) if light else "(foco eliminado)"
+        idx = hotkey.get("favorite_index", -1)
+        return f"Color favorito #{idx + 1} — {name}"
+
+    return "Acción desconocida"
+
+
 # ---------------------------------------------------------------------------
 # Tarjetas (focos y habitaciones)
 # ---------------------------------------------------------------------------
@@ -138,7 +165,8 @@ class RoomCard(QFrame):
     """
     Igual que LightCard, pero representa una Habitación: además del ícono
     on/off (con resplandor + borde dorado si hay algo prendido), muestra
-    una barra con el brillo promedio de los focos encendidos.
+    una barra con el brillo promedio de los focos encendidos. Es más
+    grande que LightCard a propósito (2 por fila en vez de 3).
     """
 
     clicked = Signal(str)
@@ -223,6 +251,34 @@ class ColorSwatchButton(QPushButton):
         chosen = menu.exec(self.mapToGlobal(pos))
         if chosen == remove_action:
             self.remove_requested.emit(self.index)
+
+
+class HotkeyRow(QFrame):
+    """Fila que muestra un atajo configurado: combinación + qué hace + eliminar."""
+
+    remove_requested = Signal(str)
+
+    def __init__(self, hotkey: dict, parent=None):
+        super().__init__(parent)
+        self.hotkey_id = hotkey["id"]
+        self.setObjectName("HotkeyRow")
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(14, 10, 10, 10)
+
+        keys_label = QLabel(hotkey.get("keys", ""))
+        keys_label.setStyleSheet(f"color: {YELLOW}; font-weight: 600;")
+        keys_label.setMinimumWidth(120)
+        layout.addWidget(keys_label)
+
+        desc_label = QLabel(_describe_hotkey(hotkey))
+        layout.addWidget(desc_label)
+        layout.addStretch()
+
+        remove_btn = QPushButton("Eliminar")
+        remove_btn.setObjectName("Secondary")
+        remove_btn.clicked.connect(lambda: self.remove_requested.emit(self.hotkey_id))
+        layout.addWidget(remove_btn)
 
 
 # ---------------------------------------------------------------------------
@@ -353,12 +409,114 @@ class AssignLightDialog(QDialog):
         self.accept()
 
 
+class AddHotkeyDialog(QDialog):
+    """
+    Flujo: 1) elegir qué hace el atajo, 2) elegir el foco/habitación (y
+    el color favorito, si aplica), 3) grabar la combinación de teclas.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Nuevo atajo de teclado")
+        self.setMinimumWidth(360)
+        layout = QVBoxLayout(self)
+
+        layout.addWidget(QLabel("Acción:"))
+        self.action_combo = QComboBox()
+        self.action_combo.addItem("Encender/apagar un foco", "toggle_light")
+        self.action_combo.addItem("Encender/apagar una habitación", "toggle_room")
+        self.action_combo.addItem("Aplicar un color favorito", "apply_favorite_color")
+        self.action_combo.currentIndexChanged.connect(self._rebuild_target_options)
+        layout.addWidget(self.action_combo)
+
+        layout.addWidget(QLabel("Destino:"))
+        self.target_combo = QComboBox()
+        self.target_combo.currentIndexChanged.connect(self._rebuild_favorite_options)
+        layout.addWidget(self.target_combo)
+
+        self.favorite_label = QLabel("Color favorito:")
+        self.favorite_combo = QComboBox()
+        layout.addWidget(self.favorite_label)
+        layout.addWidget(self.favorite_combo)
+
+        layout.addWidget(QLabel("Combinación de teclas (hacé click y apretá las teclas):"))
+        self.key_edit = QKeySequenceEdit()
+        layout.addWidget(self.key_edit)
+
+        btn_row = QHBoxLayout()
+        cancel_btn = QPushButton("Cancelar")
+        cancel_btn.clicked.connect(self.reject)
+        save_btn = QPushButton("Guardar")
+        save_btn.setObjectName("Primary")
+        save_btn.clicked.connect(self.on_save)
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(save_btn)
+        layout.addLayout(btn_row)
+
+        self._rebuild_target_options()
+
+    def _rebuild_target_options(self):
+        self.target_combo.clear()
+        action = self.action_combo.currentData()
+
+        if action == "toggle_room":
+            for room in get_rooms():
+                self.target_combo.addItem(room.get("name") or room["id"], room["id"])
+        else:
+            for light in get_lights():
+                self.target_combo.addItem(light.get("name") or light["ip"], light["id"])
+
+        self._rebuild_favorite_options()
+
+    def _rebuild_favorite_options(self):
+        action = self.action_combo.currentData()
+        show_favorites = action == "apply_favorite_color"
+        self.favorite_label.setVisible(show_favorites)
+        self.favorite_combo.setVisible(show_favorites)
+
+        if not show_favorites:
+            return
+
+        self.favorite_combo.clear()
+        light_id = self.target_combo.currentData()
+        if not light_id:
+            return
+        for i, color in enumerate(get_favorite_colors(light_id)):
+            self.favorite_combo.addItem(f"RGB({color['r']}, {color['g']}, {color['b']})", i)
+
+    def on_save(self):
+        action = self.action_combo.currentData()
+        target_id = self.target_combo.currentData()
+        keys = self.key_edit.keySequence().toString(QKeySequence.PortableText)
+
+        if not target_id:
+            QMessageBox.warning(self, "Falta el destino", "Elegí un foco o habitación.")
+            return
+        if not keys:
+            QMessageBox.warning(self, "Falta la combinación", "Grabá una combinación de teclas.")
+            return
+
+        favorite_index = -1
+        if action == "apply_favorite_color":
+            favorite_index = self.favorite_combo.currentData()
+            if favorite_index is None:
+                QMessageBox.warning(
+                    self, "Sin favoritos",
+                    "Ese foco todavía no tiene colores favoritos guardados."
+                )
+                return
+
+        add_hotkey(keys=keys, action=action, target_id=target_id, favorite_index=favorite_index)
+        self.accept()
+
+
 # ---------------------------------------------------------------------------
 # Pantalla 1: Home (lista de Habitaciones)
 # ---------------------------------------------------------------------------
 
 class HomeScreen(QWidget):
     room_selected = Signal(str)
+    settings_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -368,13 +526,21 @@ class HomeScreen(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 20, 24, 24)
 
-        # Fila 1: sólo el saludo.
+        # Fila 1: saludo + configuración.
         greeting_row = QHBoxLayout()
         user_icon = QLabel()
         user_icon.setPixmap(icon("user").pixmap(22, 22))
         greeting_row.addWidget(user_icon)
-        greeting_row.addWidget(QLabel("Bienvenido", objectName="Header"))
+        greeting_row.addWidget(QLabel("Hola user", objectName="Header"))
         greeting_row.addStretch()
+
+        settings_btn = QPushButton()
+        settings_btn.setObjectName("IconButton")
+        settings_btn.setIcon(icon("settings"))
+        settings_btn.setIconSize(QSize(20, 20))
+        settings_btn.setToolTip("Configuración")
+        settings_btn.clicked.connect(self.settings_requested.emit)
+        greeting_row.addWidget(settings_btn)
         layout.addLayout(greeting_row)
 
         # Fila 2: título + acciones, a la misma altura.
@@ -609,11 +775,6 @@ class RoomDetailScreen(QWidget):
 
 # ---------------------------------------------------------------------------
 # Pantalla 3: Detalle de Dispositivo
-#
-# El header (botón "volver") queda fijo arriba; todo lo demás va adentro
-# de un QScrollArea. El ícono + toggle principal viven dentro de un panel
-# "hero" (fondo propio, esquinas redondeadas) para separarlos visualmente
-# de los controles de abajo.
 # ---------------------------------------------------------------------------
 
 class LightDetailScreen(QWidget):
@@ -698,10 +859,8 @@ class LightDetailScreen(QWidget):
         self.temp_slider.sliderReleased.connect(self.on_temp_changed)
         layout.addWidget(self.temp_slider)
 
-        # --- Presets "Blanco" (temperatura de color fija, con ícono) ---
+        # --- Presets "Blanco" (ícono arriba, texto abajo) ---
         layout.addWidget(_section_label("Blanco"))
-        white_grid = QGridLayout()
-        white_grid.setSpacing(8)
         white_grid = QGridLayout()
         white_grid.setSpacing(8)
         white_grid.setColumnStretch(0, 1)
@@ -712,8 +871,6 @@ class LightDetailScreen(QWidget):
             btn.setText(preset["label"])
             btn.setIcon(icon(preset["icon"]))
             btn.setIconSize(QSize(26, 26))
-            btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-            btn.setCursor(Qt.PointingHandCursor)
             btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
             btn.setCursor(Qt.PointingHandCursor)
@@ -881,7 +1038,88 @@ class LightDetailScreen(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# Ventana principal: navegación Home -> Habitación -> Foco
+# Pantalla 4: Configuración (por ahora: atajos de teclado de Windows)
+# ---------------------------------------------------------------------------
+
+class SettingsScreen(QWidget):
+    back_requested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 20, 24, 24)
+        layout.setSpacing(12)
+
+        header = QHBoxLayout()
+        back_btn = QPushButton()
+        back_btn.setObjectName("IconButton")
+        back_btn.setIcon(icon("chevron-left"))
+        back_btn.setIconSize(QSize(24, 24))
+        back_btn.setToolTip("Volver")
+        back_btn.clicked.connect(self.back_requested.emit)
+        header.addWidget(back_btn)
+        header.addStretch()
+        layout.addLayout(header)
+
+        title = QLabel("Configuración")
+        title.setObjectName("ScreenTitle")
+        layout.addWidget(title)
+
+        hotkeys_header = QHBoxLayout()
+        hotkeys_header.addWidget(_section_label("Atajos de teclado (Windows)"))
+        hotkeys_header.addStretch()
+        add_hotkey_btn = QPushButton("+ Agregar atajo")
+        add_hotkey_btn.setObjectName("CompactAdd")
+        add_hotkey_btn.clicked.connect(self.open_add_hotkey)
+        hotkeys_header.addWidget(add_hotkey_btn)
+        layout.addLayout(hotkeys_header)
+
+        note = QLabel(
+            "Funcionan mientras el ícono de la bandeja esté activo "
+            "(python -m tray). En Linux se configuran distinto, desde el "
+            "propio compositor — todavía no implementado acá."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #8A8478; font-size: 11px;")
+        layout.addWidget(note)
+
+        self.hotkeys_list = QVBoxLayout()
+        self.hotkeys_list.setSpacing(8)
+        layout.addLayout(self.hotkeys_list)
+
+        self.empty_label = QLabel("Todavía no configuraste ningún atajo.")
+        self.empty_label.setStyleSheet("color: #8A8478;")
+        layout.addWidget(self.empty_label)
+
+        layout.addStretch()
+        self.refresh()
+
+    def refresh(self):
+        while self.hotkeys_list.count():
+            item = self.hotkeys_list.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        hotkeys = get_hotkeys()
+        self.empty_label.setVisible(not hotkeys)
+
+        for hotkey in hotkeys:
+            row = HotkeyRow(hotkey)
+            row.remove_requested.connect(self.on_remove_hotkey)
+            self.hotkeys_list.addWidget(row)
+
+    def open_add_hotkey(self):
+        if AddHotkeyDialog(self).exec() == QDialog.Accepted:
+            self.refresh()
+
+    def on_remove_hotkey(self, hotkey_id: str):
+        remove_hotkey(hotkey_id)
+        self.refresh()
+
+
+# ---------------------------------------------------------------------------
+# Ventana principal: navegación Home -> Habitación -> Foco / Configuración
 # ---------------------------------------------------------------------------
 
 class MainWindow(QMainWindow):
@@ -889,6 +1127,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Spotlight-Key")
         self.setMinimumSize(420, 600)
+        self.setWindowIcon(icon(BULB_ON_ICON))
         self.resize(520, 780)  # tamaño inicial cómodo; sin esto Qt abre en el mínimo
 
         self.stack = QStackedWidget()
@@ -897,14 +1136,18 @@ class MainWindow(QMainWindow):
         self.home = HomeScreen()
         self.room_detail = RoomDetailScreen()
         self.light_detail = LightDetailScreen()
+        self.settings = SettingsScreen()
         self.stack.addWidget(self.home)
         self.stack.addWidget(self.room_detail)
         self.stack.addWidget(self.light_detail)
+        self.stack.addWidget(self.settings)
 
         self.home.room_selected.connect(self.open_room)
+        self.home.settings_requested.connect(self.open_settings)
         self.room_detail.back_requested.connect(self.open_home)
         self.room_detail.light_selected.connect(self.open_light)
         self.light_detail.back_requested.connect(self.open_room_from_light)
+        self.settings.back_requested.connect(self.open_home)
 
     def open_room(self, room_id: str):
         self.room_detail.load_room(room_id)
@@ -918,6 +1161,10 @@ class MainWindow(QMainWindow):
         self.light_detail.load_light(light_id)
         self.stack.setCurrentWidget(self.light_detail)
 
+    def open_settings(self):
+        self.settings.refresh()
+        self.stack.setCurrentWidget(self.settings)
+
     def open_room_from_light(self):
         # Vuelve a la habitación desde la que se entró al detalle del foco.
         # Si por algún motivo no hay una room cargada (no debería pasar en
@@ -930,7 +1177,21 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    if sys.platform == "win32":
+        # Sin esto, la barra de tareas de Windows sigue mostrando el
+        # ícono genérico de python.exe aunque la ventana tenga el suyo
+        # propio (ver setWindowIcon en MainWindow) — Windows la agrupa
+        # por este id, no por el ícono. Tiene que llamarse ANTES de
+        # crear la QApplication.
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "spotlightkey.spotlightkey.app.1"
+            )
+        except Exception:
+            pass
+
     app = QApplication(sys.argv)
+    app.setWindowIcon(icon(BULB_ON_ICON))
     app.setStyleSheet(STYLESHEET)
     window = MainWindow()
     window.show()
