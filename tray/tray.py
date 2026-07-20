@@ -169,7 +169,7 @@ def _build_menu_items():
     yield pystray.MenuItem("Salir", _quit)
 
 
-def _start_status_loop(icon: pystray.Icon):
+def _start_status_loop(icon):
     """
     Corre como 'setup' de pystray: arranca apenas el ícono está listo
     para mostrarse. Arranca dos cosas en paralelo:
