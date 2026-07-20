@@ -8,10 +8,13 @@ sólo control rápido.
 
 También es responsable de mantener vivos los atajos de teclado
 globales de Windows (ver hotkeys/windows.py) — necesitan algún proceso
-corriendo todo el tiempo, y el tray ya cumple ese rol.
+corriendo todo el tiempo, y el tray ya cumple ese rol. Pensado para
+correr solo al iniciar Windows (ver instrucciones de la carpeta de
+inicio), no hace falta abrirlo a mano.
 
 Corre su propio loop de eventos (pystray.Icon.run()), separado del de la
-GUI (PySide6). Se lanza como proceso aparte: `python -m tray`.
+GUI (PySide6). Se lanza como proceso aparte: `python -m tray` en
+desarrollo, o SpotlightKey-Tray.exe una vez empaquetado.
 """
 
 import io
@@ -30,9 +33,10 @@ from PySide6.QtWidgets import QApplication
 
 from core.config import get_lights
 from core.device import Light, LightUnreachableError
+from core.resources import resource_path
 from hotkeys.windows import start_hotkey_manager
 
-ICONS_DIR = Path(__file__).resolve().parent.parent / "sources" / "SVG"
+ICONS_DIR = resource_path("sources", "SVG")
 
 STATUS_REFRESH_INTERVAL = 25  # segundos entre chequeos de estado en background
 
@@ -125,6 +129,19 @@ def _toggle_light(light_data: dict):
 
 
 def _open_gui(icon, item):
+    """
+    En desarrollo, lanza la GUI vía el intérprete de Python del venv.
+    Ya empaquetado (sys.frozen), no hay garantía de que exista un Python
+    instalable en la máquina — busca el .exe de la GUI al lado del
+    ejecutable del tray (dist/SpotlightKey-Tray/ y dist/SpotlightKey/
+    quedan como carpetas hermanas dentro de dist/, ver build.bat).
+    """
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        gui_exe = exe_dir.parent / "SpotlightKey" / "SpotlightKey.exe"
+        if gui_exe.exists():
+            subprocess.Popen([str(gui_exe)])
+            return
     subprocess.Popen([sys.executable, "-m", "gui"])
 
 

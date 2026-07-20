@@ -17,3 +17,8 @@ config.local.toml
 .idea/
 *.swp
 .DS_Store
+
+pendientes.md
+
+# PyInstaller (se regeneran solos en cada build.bat, no son la fuente de verdad)
+*.spec

@@ -1,7 +1,8 @@
-from pathlib import Path
 from PySide6.QtGui import QIcon
 
-ICONS_DIR = Path(__file__).resolve().parent.parent / "sources" / "SVG"
+from core.resources import resource_path
+
+ICONS_DIR = resource_path("sources/SVG")
 
 
 def icon(name: str) -> QIcon:

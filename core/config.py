@@ -285,12 +285,24 @@ def get_hotkeys() -> list[dict]:
     return load_config().get("hotkeys", [])
 
 
-def add_hotkey(keys: str, action: str, target_id: str, favorite_index: int = -1) -> dict:
+def add_hotkey(
+    keys: str,
+    action: str,
+    target_id: str = "",
+    favorite_index: int = -1,
+    direction: str = "",
+    preset_key: str = "",
+) -> dict:
     """
     action: "toggle_light" | "toggle_room" | "apply_favorite_color"
-    target_id: id del foco o de la habitación, según la acción
+            | "adjust_brightness" | "apply_white_preset" | "turn_off_all"
+    target_id: id del foco o de la habitación, según la acción.
+               "" para "turn_off_all" (no tiene un destino puntual).
     favorite_index: sólo para "apply_favorite_color" (posición en la
-                    lista de favoritos de ese foco)
+                    lista de favoritos de ese foco).
+    direction: "up" | "down", sólo para "adjust_brightness".
+    preset_key: clave de core.presets.WHITE_PRESETS, sólo para
+                "apply_white_preset".
     """
     config = load_config()
     hotkeys = config.setdefault("hotkeys", [])
@@ -300,6 +312,8 @@ def add_hotkey(keys: str, action: str, target_id: str, favorite_index: int = -1)
         "action": action,
         "target_id": target_id,
         "favorite_index": favorite_index,
+        "direction": direction,
+        "preset_key": preset_key,
     }
     hotkeys.append(new_hotkey)
     save_config(config)

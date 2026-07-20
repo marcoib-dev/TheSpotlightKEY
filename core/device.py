@@ -148,6 +148,44 @@ class Light:
         kelvin = max(self.MIN_COLOR_TEMP, min(self.MAX_COLOR_TEMP, kelvin))
         asyncio.run(self._turn_on(colortemp=kelvin))
 
+    def step_brightness(self, direction: str, step_percent: int = 10) -> int | bool:
+        """
+        Sube o baja el brillo un step_percent% (sobre la escala 0-255)
+        respecto al brillo actual. Se comporta como un dimmer real:
+
+          - Si el foco está apagado y direction="up": lo enciende al
+            valor del step (arranca "despacito" en vez de tirar error).
+          - Si el foco está apagado y direction="down": no hace nada,
+            no tiene sentido bajarle a algo que ya está apagado.
+          - Si al bajar el resultado cruza 0 (o menos): apaga el foco
+            en vez de dejarlo en un brillo casi invisible.
+
+        Devuelve el nuevo brillo (int) si quedó encendido, o False si
+        quedó apagado.
+        """
+        step = round(255 * step_percent / 100)
+        status = self.get_status()  # tira LightUnreachableError si no responde
+
+        if not status["is_on"]:
+            if direction == "down":
+                return False
+            self.set_brightness(step)
+            return step
+
+        current = status["brightness"] if status["brightness"] is not None else 255
+
+        if direction == "up":
+            new_value = min(255, current + step)
+            self.set_brightness(new_value)
+            return new_value
+
+        new_value = current - step
+        if new_value <= 0:
+            self.turn_off()
+            return False
+        self.set_brightness(new_value)
+        return new_value
+
     def set_scene(self, scene_id: int):
         """
         Activa una escena nativa del foco (ver pywizlight.scenes.SCENES

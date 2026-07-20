@@ -27,7 +27,7 @@ from core.presets import WHITE_PRESETS
 from gui.theme import STYLESHEET, YELLOW, WHITE
 from gui.icons import icon
 from gui.workers import LightStatusWorker, RoomStatusWorker
-
+from core.hotkeys import BRIGHTNESS_STEP_PERCENT
 # Nombres de archivo tal cual los bajó Marco de SvgRepo (ver sources/SVG/).
 # Si en algún momento se renombran a algo más prolijo (ej: "bulb-on.svg" /
 # "bulb-off.svg"), sólo hay que actualizar estas dos constantes.
@@ -113,6 +113,21 @@ def _describe_hotkey(hotkey: dict) -> str:
         idx = hotkey.get("favorite_index", -1)
         return f"Color favorito #{idx + 1} — {name}"
 
+    if action == "adjust_brightness":
+        light = get_light(target_id)
+        name = (light.get("name") or light["ip"]) if light else "(foco eliminado)"
+        verb = "Subir" if hotkey.get("direction") == "up" else "Bajar"
+        return f"{verb} brillo ({BRIGHTNESS_STEP_PERCENT}%) — {name}"
+
+    if action == "apply_white_preset":
+        light = get_light(target_id)
+        name = (light.get("name") or light["ip"]) if light else "(foco eliminado)"
+        preset = WHITE_PRESETS.get(hotkey.get("preset_key", ""))
+        label = preset["label"] if preset else "(preset eliminado)"
+        return f"Preset '{label}' — {name}"
+
+    if action == "turn_off_all":
+        return "Apagar todos los focos"
     return "Acción desconocida"
 
 
@@ -426,10 +441,15 @@ class AddHotkeyDialog(QDialog):
         self.action_combo.addItem("Encender/apagar un foco", "toggle_light")
         self.action_combo.addItem("Encender/apagar una habitación", "toggle_room")
         self.action_combo.addItem("Aplicar un color favorito", "apply_favorite_color")
+        self.action_combo.addItem("Subir brillo", "brightness_up")
+        self.action_combo.addItem("Bajar brillo", "brightness_down")
+        self.action_combo.addItem("Aplicar preset de blanco", "apply_white_preset")
+        self.action_combo.addItem("Apagar todos los focos", "turn_off_all")
         self.action_combo.currentIndexChanged.connect(self._rebuild_target_options)
         layout.addWidget(self.action_combo)
 
-        layout.addWidget(QLabel("Destino:"))
+        self.target_label = QLabel("Destino:")
+        layout.addWidget(self.target_label)
         self.target_combo = QComboBox()
         self.target_combo.currentIndexChanged.connect(self._rebuild_favorite_options)
         layout.addWidget(self.target_combo)
@@ -438,6 +458,13 @@ class AddHotkeyDialog(QDialog):
         self.favorite_combo = QComboBox()
         layout.addWidget(self.favorite_label)
         layout.addWidget(self.favorite_combo)
+
+        self.preset_label = QLabel("Ajustes Predeterminados:")
+        self.preset_combo = QComboBox()
+        for key, preset in WHITE_PRESETS.items():
+            self.preset_combo.addItem(preset["label"], key)
+        layout.addWidget(self.preset_label)
+        layout.addWidget(self.preset_combo)
 
         layout.addWidget(QLabel("Combinación de teclas (hacé click y apretá las teclas):"))
         self.key_edit = QKeySequenceEdit()
@@ -459,14 +486,19 @@ class AddHotkeyDialog(QDialog):
         self.target_combo.clear()
         action = self.action_combo.currentData()
 
+        needs_target = action != "turn_off_all"
+        self.target_label.setVisible(needs_target)
+        self.target_combo.setVisible(needs_target)
+
         if action == "toggle_room":
             for room in get_rooms():
                 self.target_combo.addItem(room.get("name") or room["id"], room["id"])
-        else:
+        elif needs_target:
             for light in get_lights():
                 self.target_combo.addItem(light.get("name") or light["ip"], light["id"])
 
         self._rebuild_favorite_options()
+        self._rebuild_preset_options()
 
     def _rebuild_favorite_options(self):
         action = self.action_combo.currentData()
@@ -484,12 +516,17 @@ class AddHotkeyDialog(QDialog):
         for i, color in enumerate(get_favorite_colors(light_id)):
             self.favorite_combo.addItem(f"RGB({color['r']}, {color['g']}, {color['b']})", i)
 
+    def _rebuild_preset_options(self):
+        show_preset = self.action_combo.currentData() == "apply_white_preset"
+        self.preset_label.setVisible(show_preset)
+        self.preset_combo.setVisible(show_preset)
+
     def on_save(self):
         action = self.action_combo.currentData()
-        target_id = self.target_combo.currentData()
+        target_id = self.target_combo.currentData() if action != "turn_off_all" else ""
         keys = self.key_edit.keySequence().toString(QKeySequence.PortableText)
 
-        if not target_id:
+        if action != "turn_off_all" and not target_id:
             QMessageBox.warning(self, "Falta el destino", "Elegí un foco o habitación.")
             return
         if not keys:
@@ -506,7 +543,20 @@ class AddHotkeyDialog(QDialog):
                 )
                 return
 
-        add_hotkey(keys=keys, action=action, target_id=target_id, favorite_index=favorite_index)
+        preset_key = ""
+        if action == "apply_white_preset":
+            preset_key = self.preset_combo.currentData()
+
+        direction = ""
+        stored_action = action
+        if action in ("brightness_up", "brightness_down"):
+            stored_action = "adjust_brightness"
+            direction = "up" if action == "brightness_up" else "down"
+
+        add_hotkey(
+            keys=keys, action=stored_action, target_id=target_id,
+            favorite_index=favorite_index, direction=direction, preset_key=preset_key,
+        )
         self.accept()
 
 
@@ -531,7 +581,7 @@ class HomeScreen(QWidget):
         user_icon = QLabel()
         user_icon.setPixmap(icon("user").pixmap(22, 22))
         greeting_row.addWidget(user_icon)
-        greeting_row.addWidget(QLabel("Hola user", objectName="Header"))
+        greeting_row.addWidget(QLabel("Bienvenido", objectName="Header"))
         greeting_row.addStretch()
 
         settings_btn = QPushButton()
@@ -859,8 +909,8 @@ class LightDetailScreen(QWidget):
         self.temp_slider.sliderReleased.connect(self.on_temp_changed)
         layout.addWidget(self.temp_slider)
 
-        # --- Presets "Blanco" (ícono arriba, texto abajo) ---
-        layout.addWidget(_section_label("Blanco"))
+        # --- Presets "ajustes predefinidos" (ícono arriba, texto abajo) ---
+        layout.addWidget(_section_label("ajustes predefinidos"))
         white_grid = QGridLayout()
         white_grid.setSpacing(8)
         white_grid.setColumnStretch(0, 1)
