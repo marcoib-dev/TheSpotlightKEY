@@ -106,4 +106,32 @@ QSlider::handle:horizontal {{
     background: {YELLOW}; width: 18px; height: 18px; margin: -6px 0; border-radius: 9px;
 }}
 QSlider::sub-page:horizontal {{ background: {YELLOW}; border-radius: 3px; }}
+
+QFrame#SettingsRow {{
+    background-color: {SURFACE};
+    border-radius: 14px;
+    border: 1px solid transparent;
+}}
+QFrame#SettingsRow[clickable="true"]:hover {{
+    background-color: {SURFACE_HOVER};
+    border: 1px solid {BORDER_ACCENT};
+}}
+QFrame#RowIconBadge {{ background-color: {TOGGLE_ON_BG}; border-radius: 11px; }}
+QLabel#RowTitle {{ font-size: 14px; font-weight: 600; }}
+QLabel#RowSubtitle {{ font-size: 11.5px; color: {TEXT_SECONDARY}; }}
+QLabel#RowCount {{
+    font-size: 11px; font-weight: 700; color: {BLACK};
+    background-color: {YELLOW}; border-radius: 10px; padding: 3px 9px;
+}}
+QLabel#RowChevron {{ color: {TEXT_SECONDARY}; font-size: 16px; font-weight: 700; }}
+QLabel#VersionPill {{
+    font-size: 10.5px; color: {TEXT_SECONDARY}; background-color: {BLACK};
+    border: 1px solid {BORDER}; border-radius: 10px; padding: 3px 8px;
+}}
+QLabel#PlatformNote {{
+    color: {TEXT_SECONDARY}; font-size: 11px;
+    background-color: rgba(255,199,44,0.05);
+    border: 1px solid {BORDER}; border-radius: 8px; padding: 10px 12px;
+}}
+
 """

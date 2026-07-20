@@ -28,6 +28,7 @@ from gui.theme import STYLESHEET, YELLOW, WHITE
 from gui.icons import icon
 from gui.workers import LightStatusWorker, RoomStatusWorker
 from core.hotkeys import BRIGHTNESS_STEP_PERCENT
+from gui.theme import STYLESHEET, YELLOW, WHITE, TEXT_SECONDARY
 # Nombres de archivo tal cual los bajó Marco de SvgRepo (ver sources/SVG/).
 # Si en algún momento se renombran a algo más prolijo (ej: "bulb-on.svg" /
 # "bulb-off.svg"), sólo hay que actualizar estas dos constantes.
@@ -93,7 +94,7 @@ def _tinted_icon(name: str, color: str, size: int = 28) -> QIcon:
 
 
 def _describe_hotkey(hotkey: dict) -> str:
-    """Texto legible de qué hace un atajo, para listarlo en Configuración."""
+    """Texto legible de qué hace un atajo, para listarlo en Atajos de teclado."""
     action = hotkey.get("action")
     target_id = hotkey.get("target_id")
 
@@ -128,6 +129,7 @@ def _describe_hotkey(hotkey: dict) -> str:
 
     if action == "turn_off_all":
         return "Apagar todos los focos"
+
     return "Acción desconocida"
 
 
@@ -295,6 +297,67 @@ class HotkeyRow(QFrame):
         remove_btn.clicked.connect(lambda: self.remove_requested.emit(self.hotkey_id))
         layout.addWidget(remove_btn)
 
+class SettingsRow(QFrame):
+    """Fila clickeable de la pantalla Hub de Configuración: ícono +
+    título/subtítulo + badge opcional (contador o versión) + chevron."""
+
+    clicked = Signal()
+
+    def __init__(self, icon_name: str, title: str, subtitle: str,
+                 count: int | None = None, version: str | None = None,
+                 clickable: bool = True, parent=None):
+        super().__init__(parent)
+        self.setObjectName("SettingsRow")
+        self.setProperty("clickable", clickable)
+        self._clickable = clickable
+        self.setCursor(Qt.PointingHandCursor if clickable else Qt.ArrowCursor)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(14)
+
+        badge = QFrame()
+        badge.setObjectName("RowIconBadge")
+        badge.setFixedSize(40, 40)
+        badge_layout = QVBoxLayout(badge)
+        badge_layout.setContentsMargins(0, 0, 0, 0)
+        badge_layout.setAlignment(Qt.AlignCenter)
+        icon_label = QLabel()
+        icon_label.setPixmap(_tinted_icon(icon_name, YELLOW, size=20).pixmap(20, 20))
+        badge_layout.addWidget(icon_label)
+        layout.addWidget(badge)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(2)
+        text_col.addWidget(self._label(title, "RowTitle"))
+        text_col.addWidget(self._label(subtitle, "RowSubtitle"))
+        layout.addLayout(text_col, 1)
+
+        self.count_label = None
+        if count is not None:
+            self.count_label = self._label(str(count), "RowCount")
+            layout.addWidget(self.count_label)
+
+        if version is not None:
+            layout.addWidget(self._label(version, "VersionPill"))
+
+        if clickable:
+            layout.addWidget(self._label("\u203a", "RowChevron"))
+
+    @staticmethod
+    def _label(text: str, object_name: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName(object_name)
+        return label
+
+    def set_count(self, count: int):
+        if self.count_label is not None:
+            self.count_label.setText(str(count))
+
+    def mousePressEvent(self, event):
+        if self._clickable:
+            self.clicked.emit()
+        super().mousePressEvent(event)
 
 # ---------------------------------------------------------------------------
 # Diálogos
@@ -443,7 +506,7 @@ class AddHotkeyDialog(QDialog):
         self.action_combo.addItem("Aplicar un color favorito", "apply_favorite_color")
         self.action_combo.addItem("Subir brillo", "brightness_up")
         self.action_combo.addItem("Bajar brillo", "brightness_down")
-        self.action_combo.addItem("Aplicar preset de blanco", "apply_white_preset")
+        self.action_combo.addItem("Aplicar preset de temperatura", "apply_white_preset")
         self.action_combo.addItem("Apagar todos los focos", "turn_off_all")
         self.action_combo.currentIndexChanged.connect(self._rebuild_target_options)
         layout.addWidget(self.action_combo)
@@ -1092,14 +1155,16 @@ class LightDetailScreen(QWidget):
 # ---------------------------------------------------------------------------
 
 class SettingsScreen(QWidget):
+    """Hub de Configuración: entrada a cada sub-sección."""
+
     back_requested = Signal()
+    hotkeys_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 20, 24, 24)
-        layout.setSpacing(12)
+        layout.setSpacing(6)
 
         header = QHBoxLayout()
         back_btn = QPushButton()
@@ -1115,23 +1180,68 @@ class SettingsScreen(QWidget):
         title = QLabel("Configuración")
         title.setObjectName("ScreenTitle")
         layout.addWidget(title)
+        layout.addSpacing(6)
 
-        hotkeys_header = QHBoxLayout()
-        hotkeys_header.addWidget(_section_label("Atajos de teclado (Windows)"))
-        hotkeys_header.addStretch()
+        layout.addWidget(_section_label("Control"))
+        self.hotkeys_row = SettingsRow(
+            "keyboard", "Atajos de teclado", "Combinaciones globales — Windows",
+        )
+        self.hotkeys_row.clicked.connect(self.hotkeys_requested.emit)
+        layout.addWidget(self.hotkeys_row)
+
+        layout.addSpacing(10)
+        layout.addWidget(_section_label("Información"))
+        about_row = SettingsRow(
+            "info", "Spotlight-Key", "Control local de focos WiZ",
+            version="v0.4.0", clickable=False,
+        )
+        layout.addWidget(about_row)
+
+        layout.addStretch()
+        self.refresh()
+
+    def refresh(self):
+        self.hotkeys_row.set_count(len(get_hotkeys()))
+
+
+class HotkeysScreen(QWidget):
+    """Ex-contenido de SettingsScreen: gestión de atajos, ahora su propia pantalla."""
+
+    back_requested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 20, 24, 24)
+        layout.setSpacing(12)
+
+        header = QHBoxLayout()
+        back_btn = QPushButton()
+        back_btn.setObjectName("IconButton")
+        back_btn.setIcon(icon("chevron-left"))
+        back_btn.setIconSize(QSize(24, 24))
+        back_btn.setToolTip("Volver a Configuración")
+        back_btn.clicked.connect(self.back_requested.emit)
+        header.addWidget(back_btn)
+
+        title = QLabel("Atajos de teclado")
+        title.setObjectName("ScreenTitle")
+        header.addWidget(title)
+        header.addStretch()
+
         add_hotkey_btn = QPushButton("+ Agregar atajo")
         add_hotkey_btn.setObjectName("CompactAdd")
         add_hotkey_btn.clicked.connect(self.open_add_hotkey)
-        hotkeys_header.addWidget(add_hotkey_btn)
-        layout.addLayout(hotkeys_header)
+        header.addWidget(add_hotkey_btn)
+        layout.addLayout(header)
 
         note = QLabel(
             "Funcionan mientras el ícono de la bandeja esté activo "
             "(python -m tray). En Linux se configuran distinto, desde el "
             "propio compositor — todavía no implementado acá."
         )
+        note.setObjectName("PlatformNote")
         note.setWordWrap(True)
-        note.setStyleSheet("color: #8A8478; font-size: 11px;")
         layout.addWidget(note)
 
         self.hotkeys_list = QVBoxLayout()
@@ -1139,7 +1249,7 @@ class SettingsScreen(QWidget):
         layout.addLayout(self.hotkeys_list)
 
         self.empty_label = QLabel("Todavía no configuraste ningún atajo.")
-        self.empty_label.setStyleSheet("color: #8A8478;")
+        self.empty_label.setStyleSheet(f"color: {TEXT_SECONDARY};")
         layout.addWidget(self.empty_label)
 
         layout.addStretch()
@@ -1167,7 +1277,6 @@ class SettingsScreen(QWidget):
         remove_hotkey(hotkey_id)
         self.refresh()
 
-
 # ---------------------------------------------------------------------------
 # Ventana principal: navegación Home -> Habitación -> Foco / Configuración
 # ---------------------------------------------------------------------------
@@ -1187,10 +1296,12 @@ class MainWindow(QMainWindow):
         self.room_detail = RoomDetailScreen()
         self.light_detail = LightDetailScreen()
         self.settings = SettingsScreen()
+        self.hotkeys_screen = HotkeysScreen()          
         self.stack.addWidget(self.home)
         self.stack.addWidget(self.room_detail)
         self.stack.addWidget(self.light_detail)
         self.stack.addWidget(self.settings)
+        self.stack.addWidget(self.hotkeys_screen)     
 
         self.home.room_selected.connect(self.open_room)
         self.home.settings_requested.connect(self.open_settings)
@@ -1198,6 +1309,12 @@ class MainWindow(QMainWindow):
         self.room_detail.light_selected.connect(self.open_light)
         self.light_detail.back_requested.connect(self.open_room_from_light)
         self.settings.back_requested.connect(self.open_home)
+        self.settings.hotkeys_requested.connect(self.open_hotkeys)  
+        self.hotkeys_screen.back_requested.connect(self.open_settings)  
+
+    def open_hotkeys(self):
+        self.hotkeys_screen.refresh()
+        self.stack.setCurrentWidget(self.hotkeys_screen)
 
     def open_room(self, room_id: str):
         self.room_detail.load_room(room_id)
